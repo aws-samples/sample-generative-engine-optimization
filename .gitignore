@@ -1,0 +1,26 @@
+# CDK
+*.js
+!jest.config.js
+!eslint.config.js
+*.d.ts
+node_modules
+cdk.out
+cdk.context.json
+.cdk.staging
+
+# Build / logs
+*.log
+coverage
+.nyc_output
+
+# Env / secrets
+.env
+.env.*
+*.pem
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea
