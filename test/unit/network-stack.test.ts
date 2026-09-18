@@ -1,4 +1,4 @@
-import { Template, Match } from 'aws-cdk-lib/assertions';
+import { Template } from 'aws-cdk-lib/assertions';
 import { NetworkStack } from '../../lib/stacks/index.js';
 import { testAppConfig } from './helpers.js';
 
@@ -51,18 +51,9 @@ describe('NetworkStack topology', () => {
     expect(Object.keys(endpoints)).toHaveLength(5);
   });
 
-  it('creates three security groups (lambda, database, endpoints)', () => {
-    template.resourceCountIs('AWS::EC2::SecurityGroup', 3);
-  });
-
-  it('allows PostgreSQL (5432) into the database SG only from the lambda SG', () => {
-    template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
-      IpProtocol: 'tcp',
-      FromPort: 5432,
-      ToPort: 5432,
-      GroupId: Match.anyValue(),
-      SourceSecurityGroupId: Match.anyValue(),
-    });
+  it('creates two security groups (lambda, endpoints)', () => {
+    // The Aurora SG is owned by the DatabaseStack, not the network layer.
+    template.resourceCountIs('AWS::EC2::SecurityGroup', 2);
   });
 
   it('allows HTTPS (443) into the endpoint SG from the lambda SG', () => {
@@ -81,10 +72,9 @@ describe('NetworkStack topology', () => {
     });
   });
 
-  it('exports the VPC id and security group ids', () => {
+  it('exports the VPC id and the lambda security group id', () => {
     template.hasOutput('VpcId', {});
     template.hasOutput('LambdaSecurityGroupId', {});
-    template.hasOutput('DatabaseSecurityGroupId', {});
   });
 });
 

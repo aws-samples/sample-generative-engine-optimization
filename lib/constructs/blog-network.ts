@@ -40,16 +40,17 @@ export interface BlogNetworkProps {
  *
  * Security groups:
  *  - lambdaSecurityGroup   : attached to Lambda; no inbound, egress allowed
- *  - databaseSecurityGroup : Aurora; inbound databasePort only from Lambda SG
  *  - endpointSecurityGroup : interface endpoints; inbound 443 from Lambda SG
+ *
+ * The Aurora security group is owned by the DatabaseStack (not here) to keep
+ * cross-stack references one-directional and avoid a dependency cycle; it
+ * references `lambdaSecurityGroup` for its ingress rule.
  */
 export class BlogNetwork extends Construct {
   /** The VPC hosting compute and data tiers. */
   public readonly vpc: ec2.Vpc;
   /** Security group for the Lambda API functions. */
   public readonly lambdaSecurityGroup: ec2.SecurityGroup;
-  /** Security group for the Aurora database. */
-  public readonly databaseSecurityGroup: ec2.SecurityGroup;
   /** Security group shared by the interface VPC endpoints. */
   public readonly endpointSecurityGroup: ec2.SecurityGroup;
 
@@ -94,13 +95,6 @@ export class BlogNetwork extends Construct {
       allowAllOutbound: true,
     });
 
-    this.databaseSecurityGroup = new ec2.SecurityGroup(this, 'DatabaseSg', {
-      vpc: this.vpc,
-      securityGroupName: `${prefix}-database-sg`,
-      description: 'Aurora PostgreSQL; inbound from Lambda only.',
-      allowAllOutbound: false,
-    });
-
     this.endpointSecurityGroup = new ec2.SecurityGroup(this, 'EndpointSg', {
       vpc: this.vpc,
       securityGroupName: `${prefix}-endpoint-sg`,
@@ -108,12 +102,11 @@ export class BlogNetwork extends Construct {
       allowAllOutbound: false,
     });
 
-    // Aurora accepts connections from the Lambda tier only, on the DB port.
-    this.databaseSecurityGroup.addIngressRule(
-      this.lambdaSecurityGroup,
-      ec2.Port.tcp(network.databasePort),
-      'Allow PostgreSQL from the Lambda API',
-    );
+    // Note: the Aurora security group is intentionally owned by the
+    // DatabaseStack (the stack that owns the cluster). Creating it here and
+    // attaching it to a resource in another stack produces a cross-stack
+    // dependency cycle. The DatabaseStack references `lambdaSecurityGroup`
+    // (exposed below) for its ingress rule, keeping references one-directional.
 
     // Interface endpoints accept HTTPS from the Lambda tier.
     this.endpointSecurityGroup.addIngressRule(

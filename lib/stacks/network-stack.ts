@@ -39,12 +39,6 @@ export class NetworkStack extends Stack {
       exportName: `${config.prefix}-lambda-sg-id`,
     });
 
-    new CfnOutput(this, 'DatabaseSecurityGroupId', {
-      value: this.blogNetwork.databaseSecurityGroup.securityGroupId,
-      description: 'Security group id for the Aurora database tier',
-      exportName: `${config.prefix}-database-sg-id`,
-    });
-
     // cdk-nag AwsSolutions-EC23 cannot evaluate the ingress rule that CDK
     // auto-adds to interface endpoints (it allows HTTPS from the VPC CIDR, a
     // resolved intrinsic Fn::GetAtt, not 0.0.0.0/0). The rule is intra-VPC and
@@ -71,10 +65,5 @@ export class NetworkStack extends Stack {
   /** Security group to attach to the Lambda API functions. */
   public get lambdaSecurityGroup(): ec2.ISecurityGroup {
     return this.blogNetwork.lambdaSecurityGroup;
-  }
-
-  /** Security group to attach to the Aurora database. */
-  public get databaseSecurityGroup(): ec2.ISecurityGroup {
-    return this.blogNetwork.databaseSecurityGroup;
   }
 }

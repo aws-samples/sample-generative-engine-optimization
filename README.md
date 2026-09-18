@@ -4,9 +4,9 @@ AWS CDK (TypeScript) infrastructure for a blog platform. The app is organized
 as a set of small, single-responsibility stacks so each component can be built
 out and deployed independently.
 
-> Status: **in progress**. `NetworkStack` is implemented; the remaining stacks
-> are documented placeholders that synthesize cleanly. Components are fleshed
-> out incrementally.
+> Status: **in progress**. `NetworkStack` and `DatabaseStack` are implemented;
+> the remaining stacks are documented placeholders that synthesize cleanly.
+> Components are fleshed out incrementally.
 
 ## Architecture
 
@@ -36,7 +36,7 @@ out and deployed independently.
 | ----------------- | -------------------- | ------ | ------------------------------------------------ |
 | `NetworkStack`    | VPC                  | ✅ done | Subnets, NAT, security groups, VPC endpoints, flow logs |
 | `StorageStack`    | S3                   | ⬜ todo | Content, data-lake, and Athena query buckets     |
-| `DatabaseStack`   | Aurora               | ⬜ todo | Serverless v2 cluster + Secrets Manager creds    |
+| `DatabaseStack`   | Aurora               | ✅ done | Serverless v2 cluster + Secrets Manager creds    |
 | `ComputeStack`    | Lambda + API         | ⬜ todo | Blog backend functions and API surface           |
 | `AiStack`         | Bedrock agent        | ⬜ todo | Generative AI features (agent, KB, action groups)|
 | `AnalyticsStack`  | Athena               | ⬜ todo | Glue catalog + Athena workgroup over S3 data     |
@@ -65,8 +65,34 @@ Each stack composes a matching reusable construct from `lib/constructs`
   - `endpoint-sg` — interface endpoints; inbound `443` from `lambda-sg`.
 - **VPC flow logs** to CloudWatch (retention + removal driven by `retainData`).
 
-Outputs `VpcId`, `LambdaSecurityGroupId`, and `DatabaseSecurityGroupId` are
-exported for cross-stack use by `DatabaseStack` and `ComputeStack`.
+Outputs `VpcId` and `LambdaSecurityGroupId` are exported for cross-stack use by
+`DatabaseStack` and `ComputeStack`.
+
+### Database layer (implemented)
+
+`DatabaseStack` → `BlogDatabase` construct provisions:
+
+- **Aurora PostgreSQL Serverless v2** cluster (writer + optional readers),
+  engine version pinned via config (never "latest").
+- Placed in the network's **private-isolated subnets**; **storage encrypted**;
+  **IAM database authentication** enabled.
+- Its **own security group** (owned by this stack, not the network layer, to
+  keep cross-stack references acyclic) allowing ingress on the DB port **only
+  from the Lambda tier's security group**.
+- **Master credentials generated into Secrets Manager** (no passwords in code
+  or state); fetched by Lambda via the Secrets Manager interface endpoint.
+- **Config-gated extras** (off by default): an **RDS Proxy** for connection
+  pooling and **Secrets Manager rotation**.
+- **Teardown behavior driven by `retainData`**: dev (`false`) destroys the
+  cluster with no deletion protection for clean `cdk destroy`; `true` switches
+  to a `SNAPSHOT` removal policy with deletion protection enabled.
+
+Outputs `ClusterEndpoint` and `SecretArn` are exported for `ComputeStack`.
+
+The cross-stack VPC/SG references use CDK's "strong" reference strength
+(`@aws-cdk/core:defaultCrossStackReferences` in `cdk.json`), so a producing
+stack cannot be deleted while a consumer still references it — teardown must run
+in reverse dependency order (which `bin/app.ts` already expresses).
 
 ## Project layout
 
@@ -125,6 +151,13 @@ Account/region resolve from the CDK CLI environment or the
 | `natGateways`    | `1`            | integer 0..maxAzs      | NAT gateways (1 = single regional; bump for HA) |
 | `subnetCidrMask` | `24`           | integer 16..28         | Netmask for each subnet CIDR                     |
 | `databasePort`   | `5432`         | integer 1..65535       | Database port (PostgreSQL)                       |
+| `dbName`         | `blog`         | string                 | Initial database name                            |
+| `engineVersion`  | `16.13`        | `major.minor`          | Aurora PostgreSQL version (pinned, not "latest") |
+| `minAcu`         | `0.5`          | number 0.5..256        | Serverless v2 min capacity (ACU)                 |
+| `maxAcu`         | `2`            | number >= minAcu       | Serverless v2 max capacity (ACU)                 |
+| `readers`        | `0`            | integer 0..15          | Reader instances (0 = writer only)               |
+| `enableProxy`    | `false`        | true/false             | Provision an RDS Proxy (connection pooling)      |
+| `enableRotation` | `false`        | true/false             | Enable Secrets Manager credential rotation       |
 | `retainData`     | `false`        | truthy                 | Retain stateful resources on stack deletion      |
 
 Examples:
@@ -137,9 +170,9 @@ npm run deploy -- --all
 npm run deploy -- --all -c cidr=10.42.0.0/16 -c maxAzs=2 -c natGateways=2
 ```
 
-To change a **default** for everyone, edit `NETWORK_DEFAULTS` in
-`lib/config/index.ts`. To change a value for a **single deploy**, pass it as
-context — no code change needed.
+To change a **default** for everyone, edit `NETWORK_DEFAULTS` or
+`DATABASE_DEFAULTS` in `lib/config/index.ts`. To change a value for a **single
+deploy**, pass it as context — no code change needed.
 
 ## Compliance
 
@@ -150,7 +183,7 @@ before deploying.
 ## Next steps
 
 Flesh out each remaining stack/construct pair in dependency order:
-~~Network~~ → Storage → Database → Compute → Ai → Analytics → Edge → Monitoring.
+~~Network~~ → Storage → ~~Database~~ → Compute → Ai → Analytics → Edge → Monitoring.
 Add resource assertions to a dedicated unit test per stack (see
 `test/unit/network-stack.test.ts` as the template) and live checks to the
 integration suite as you go.

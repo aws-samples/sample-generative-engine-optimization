@@ -28,6 +28,28 @@ export interface NetworkConfig {
 }
 
 /**
+ * Database configuration for the {@link DatabaseStack} / BlogDatabase construct.
+ * Every value has a default (see {@link DATABASE_DEFAULTS}) and can be
+ * overridden at deploy time via CDK context.
+ */
+export interface DatabaseConfig {
+  /** Initial database name created in the cluster. */
+  readonly dbName: string;
+  /** Aurora PostgreSQL engine version, as a "major.minor" string (e.g. "16.13"). */
+  readonly engineVersion: string;
+  /** Serverless v2 minimum capacity in ACUs. */
+  readonly minAcu: number;
+  /** Serverless v2 maximum capacity in ACUs. */
+  readonly maxAcu: number;
+  /** Number of reader instances (0 = writer only). */
+  readonly readers: number;
+  /** Provision an RDS Proxy in front of the cluster for connection pooling. */
+  readonly enableProxy: boolean;
+  /** Enable Secrets Manager rotation for the master credentials. */
+  readonly enableRotation: boolean;
+}
+
+/**
  * Central configuration for the blog platform. This is the single source of
  * truth; every stack derives names, sizing, and policies from it.
  */
@@ -47,6 +69,8 @@ export interface AppConfig {
   readonly retainData: boolean;
   /** Networking settings (VPC, subnets, NAT, endpoints). */
   readonly network: NetworkConfig;
+  /** Database settings (Aurora Serverless v2, credentials, proxy, rotation). */
+  readonly database: DatabaseConfig;
 }
 
 const APP_NAME = 'geo-blog';
@@ -62,6 +86,20 @@ export const NETWORK_DEFAULTS: NetworkConfig = {
   natGateways: 1,
   subnetCidrMask: 24,
   databasePort: 5432,
+};
+
+/**
+ * Centralized database defaults. Aurora PostgreSQL Serverless v2, writer-only,
+ * proxy + rotation off (config-gated). Override any of these via CDK context.
+ */
+export const DATABASE_DEFAULTS: DatabaseConfig = {
+  dbName: 'blog',
+  engineVersion: '16.13',
+  minAcu: 0.5,
+  maxAcu: 2,
+  readers: 0,
+  enableProxy: false,
+  enableRotation: false,
 };
 
 /** Whether stateful data is retained on stack deletion, by default. */
@@ -94,6 +132,34 @@ function intOverride(
     throw new Error(`Context "${key}" must be between ${min} and ${max}, got ${value}.`);
   }
   return value;
+}
+
+/** Parse a number (possibly fractional) from context, validating the range. */
+function numberOverride(
+  raw: unknown,
+  fallback: number,
+  key: string,
+  { min = 0, max = Number.MAX_SAFE_INTEGER }: { min?: number; max?: number } = {},
+): number {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const value = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(value)) {
+    throw new Error(`Context "${key}" must be a number, got "${String(raw)}".`);
+  }
+  if (value < min || value > max) {
+    throw new Error(`Context "${key}" must be between ${min} and ${max}, got ${value}.`);
+  }
+  return value;
+}
+
+/** Parse a boolean from context (accepts booleans and "true"/"false" strings). */
+function boolOverride(raw: unknown, fallback: boolean, key: string): boolean {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  if (typeof raw === 'boolean') return raw;
+  const value = String(raw).toLowerCase();
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new Error(`Context "${key}" must be true or false, got "${String(raw)}".`);
 }
 
 /** IPv4 CIDR validation (e.g. 10.0.0.0/16). */
@@ -168,6 +234,67 @@ function resolveNetwork(source?: ContextSource): NetworkConfig {
   };
 }
 
+/** Aurora PostgreSQL Serverless v2 ACU range (0.5 min supported; 256 max). */
+const ACU_MIN = 0.5;
+const ACU_MAX = 256;
+
+/**
+ * Resolve database config: start from {@link DATABASE_DEFAULTS}, then apply any
+ * per-value overrides supplied via CDK context, validating each one.
+ *
+ * Supported context keys (all optional):
+ *   -c dbName=blog
+ *   -c engineVersion=16.13
+ *   -c minAcu=0.5
+ *   -c maxAcu=2
+ *   -c readers=1
+ *   -c enableProxy=true
+ *   -c enableRotation=true
+ */
+function resolveDatabase(source?: ContextSource): DatabaseConfig {
+  const minAcu = numberOverride(readContext(source, 'minAcu'), DATABASE_DEFAULTS.minAcu, 'minAcu', {
+    min: ACU_MIN,
+    max: ACU_MAX,
+  });
+  const maxAcu = numberOverride(readContext(source, 'maxAcu'), DATABASE_DEFAULTS.maxAcu, 'maxAcu', {
+    min: ACU_MIN,
+    max: ACU_MAX,
+  });
+  if (maxAcu < minAcu) {
+    throw new Error(`Context "maxAcu" (${maxAcu}) must be >= "minAcu" (${minAcu}).`);
+  }
+
+  const engineVersion = String(
+    readContext(source, 'engineVersion') ?? DATABASE_DEFAULTS.engineVersion,
+  );
+  if (!/^\d+\.\d+$/.test(engineVersion)) {
+    throw new Error(
+      `Context "engineVersion" must be "major.minor" (e.g. 16.13), got "${engineVersion}".`,
+    );
+  }
+
+  return {
+    dbName: String(readContext(source, 'dbName') ?? DATABASE_DEFAULTS.dbName),
+    engineVersion,
+    minAcu,
+    maxAcu,
+    readers: intOverride(readContext(source, 'readers'), DATABASE_DEFAULTS.readers, 'readers', {
+      min: 0,
+      max: 15,
+    }),
+    enableProxy: boolOverride(
+      readContext(source, 'enableProxy'),
+      DATABASE_DEFAULTS.enableProxy,
+      'enableProxy',
+    ),
+    enableRotation: boolOverride(
+      readContext(source, 'enableRotation'),
+      DATABASE_DEFAULTS.enableRotation,
+      'enableRotation',
+    ),
+  };
+}
+
 /**
  * Build the active {@link AppConfig}.
  *
@@ -193,5 +320,6 @@ export function getConfig(source?: App | ContextSource): AppConfig {
     },
     retainData,
     network: resolveNetwork(source),
+    database: resolveDatabase(source),
   };
 }

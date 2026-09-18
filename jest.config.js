@@ -4,12 +4,7 @@
 // extension (e.g. `../config/index.js`). ts-jest resolves against the `.ts`
 // sources, so we strip the extension for the resolver.
 const tsJestTransform = {
-  '^.+\\.ts$': [
-    'ts-jest',
-    {
-      isolatedModules: true,
-    },
-  ],
+  '^.+\\.ts$': ['ts-jest', {}],
 };
 
 const moduleNameMapper = {

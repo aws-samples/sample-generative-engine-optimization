@@ -31,7 +31,11 @@ const network = new NetworkStack(app, `${prefix}-network`, baseProps);
 
 const storage = new StorageStack(app, `${prefix}-storage`, baseProps);
 
-const database = new DatabaseStack(app, `${prefix}-database`, baseProps);
+const database = new DatabaseStack(app, `${prefix}-database`, {
+  ...baseProps,
+  vpc: network.vpc,
+  lambdaSecurityGroup: network.lambdaSecurityGroup,
+});
 database.addDependency(network);
 
 const ai = new AiStack(app, `${prefix}-ai`, baseProps);
