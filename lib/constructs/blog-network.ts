@@ -130,6 +130,8 @@ export class BlogNetwork extends Construct {
     // runs) and share one security group.
     const interfaceEndpoints: Record<string, ec2.InterfaceVpcEndpointAwsService> = {
       SecretsManager: ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
+      // RDS Data API — lets VPC Lambdas query Aurora over the Data API privately.
+      RdsData: ec2.InterfaceVpcEndpointAwsService.RDS_DATA,
       Bedrock: ec2.InterfaceVpcEndpointAwsService.BEDROCK,
       BedrockRuntime: ec2.InterfaceVpcEndpointAwsService.BEDROCK_RUNTIME,
       BedrockAgentRuntime: ec2.InterfaceVpcEndpointAwsService.BEDROCK_AGENT_RUNTIME,

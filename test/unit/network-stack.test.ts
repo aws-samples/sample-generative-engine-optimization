@@ -42,13 +42,13 @@ describe('NetworkStack topology', () => {
     expect(Object.keys(gateways)).toHaveLength(1);
   });
 
-  it('creates interface endpoints for Secrets Manager, Bedrock, and Logs', () => {
-    // 5 interface endpoints: SecretsManager, Bedrock, BedrockRuntime,
+  it('creates interface endpoints for Secrets Manager, RDS Data, Bedrock, and Logs', () => {
+    // 6 interface endpoints: SecretsManager, RdsData, Bedrock, BedrockRuntime,
     // BedrockAgentRuntime, CloudWatchLogs.
     const endpoints = template.findResources('AWS::EC2::VPCEndpoint', {
       Properties: { VpcEndpointType: 'Interface' },
     });
-    expect(Object.keys(endpoints)).toHaveLength(5);
+    expect(Object.keys(endpoints)).toHaveLength(6);
   });
 
   it('creates two security groups (lambda, endpoints)', () => {

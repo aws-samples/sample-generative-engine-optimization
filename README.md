@@ -4,9 +4,9 @@ AWS CDK (TypeScript) infrastructure for a blog platform. The app is organized
 as a set of small, single-responsibility stacks so each component can be built
 out and deployed independently.
 
-> Status: **in progress**. `NetworkStack`, `DatabaseStack`, and `StorageStack`
-> are implemented; the remaining stacks are documented placeholders that
-> synthesize cleanly. Components are fleshed out incrementally.
+> Status: **in progress**. `NetworkStack`, `DatabaseStack`, `StorageStack`, and
+> `ComputeStack` are implemented; the remaining stacks are documented
+> placeholders that synthesize cleanly. Components are fleshed out incrementally.
 
 ## Architecture
 
@@ -37,7 +37,7 @@ out and deployed independently.
 | `NetworkStack`    | VPC                  | ✅ done | Subnets, NAT, security groups, VPC endpoints, flow logs |
 | `StorageStack`    | S3                   | ✅ done | Single bucket: web_application/, code/, logs/, staging/ + asset upload |
 | `DatabaseStack`   | Aurora               | ✅ done | Serverless v2 cluster + Secrets Manager creds    |
-| `ComputeStack`    | Lambda + API         | ⬜ todo | Blog backend functions and API surface           |
+| `ComputeStack`    | Lambda + API         | ✅ done | 4 VPC Lambdas + public REST API (Octank Hospitality) |
 | `AiStack`         | Bedrock agent        | ⬜ todo | Generative AI features (agent, KB, action groups)|
 | `AnalyticsStack`  | Athena               | ⬜ todo | Glue catalog + Athena workgroup over S3 data     |
 | `EdgeStack`       | CloudFront           | ⬜ todo | Public CDN, S3 (OAC) + API routing               |
@@ -57,8 +57,10 @@ Each stack composes a matching reusable construct from `lib/constructs`
   interrupted only if that AZ fails — Aurora and VPC-endpoint traffic are
   unaffected).
 - **VPC endpoints**: S3 **gateway** endpoint (free); **interface** endpoints for
-  Secrets Manager, Bedrock (+ runtime, + agent-runtime), and CloudWatch Logs so
-  that traffic avoids the NAT and stays on the AWS network.
+  Secrets Manager, **RDS Data API**, Bedrock (+ runtime, + agent-runtime), and
+  CloudWatch Logs so that traffic avoids the NAT and stays on the AWS network.
+  (The RDS Data API endpoint lets the VPC-attached Lambdas query Aurora over
+  HTTP without a socket connection.)
 - **Security groups**:
   - `lambda-sg` — attached to the API functions; no inbound, egress allowed.
   - `database-sg` — Aurora; inbound `5432` **only** from `lambda-sg`.
@@ -124,12 +126,45 @@ The CDK-managed BucketDeployment Lambda carries documented cdk-nag suppressions
   cluster with no deletion protection for clean `cdk destroy`; `true` switches
   to a `SNAPSHOT` removal policy with deletion protection enabled.
 
-Outputs `ClusterEndpoint` and `SecretArn` are exported for `ComputeStack`.
+Outputs `ClusterEndpoint`, `SecretArn`, and `ClusterArn` are exported for
+`ComputeStack`. The **RDS Data API is enabled** on the cluster so the Lambda
+tier can query it over HTTP.
 
 The cross-stack VPC/SG references use CDK's "strong" reference strength
 (`@aws-cdk/core:defaultCrossStackReferences` in `cdk.json`), so a producing
 stack cannot be deleted while a consumer still references it — teardown must run
 in reverse dependency order (which `bin/app.ts` already expresses).
+
+### Compute layer (implemented)
+
+`ComputeStack` → `BlogApi` construct provisions the four GEO Lambdas and the
+public API, modeled on the functions discovered in the target account:
+
+| Function             | Timeout | Access (least-privilege)                          |
+| -------------------- | ------- | ------------------------------------------------- |
+| `api-handler`        | 30s     | RDS **Data API** on the cluster + read DB secret  |
+| `citation-tracker`   | 300s    | Bedrock `InvokeModel*` + `PutMetricData` (ns-scoped) + read `code/` |
+| `patch-applier`      | 3s      | Read `web_application/*`, read/write `staging/*`  |
+| `promoter`           | 3s      | Read/write `web_application/*` + `staging/*`, CloudFront invalidation, metrics |
+
+- All functions are **python3.13**, handler `lambda_function.lambda_handler`,
+  sourced from `assets/code/<name>/`, and **attached to the VPC**
+  (private-egress subnets, network `lambdaSecurityGroup`).
+- **Public regional REST API Gateway** ("Octank Hospitality API") fronts
+  `api-handler` via Lambda proxy integration, with the route tree:
+  `GET /properties`, `GET /properties/{propertyId}`,
+  `GET /properties/{propertyId}/rates`,
+  `GET /properties/{propertyId}/availability`, `POST /reservations`.
+  The API is intentionally **public** so external AI engines can call it; the
+  Lambdas' VPC attachment governs only their outbound access (Aurora Data API,
+  Secrets Manager, Bedrock, S3 — all via VPC endpoints).
+- Stage access logging + throttling enabled. `ApiEndpoint` is exported.
+- The `promoter`'s CloudFront `distributionId` is supplied via context until the
+  EdgeStack is built: `-c distributionId=E2HKAT79V522DO`.
+
+Documented cdk-nag suppressions cover the intentional public API (APIG4/COG4),
+the pinned python3.13 runtime (L1), managed exec/VPC roles (IAM4), and
+scoped-wildcard grants (IAM5).
 
 ## Project layout
 
@@ -199,6 +234,15 @@ Account/region resolve from the CDK CLI environment or the
 | `queryResultRetentionDays`      | `30` | integer 1..3650 | Expire Athena results (`logs/athena_logs/`)   |
 | `contentIaTransitionDays`       | `90` | integer 1..3650 | Transition `web_application/` to Infrequent Access |
 | `noncurrentVersionRetentionDays`| `30` | integer 1..3650 | Expire noncurrent object versions             |
+| `lambdaMemoryMb`        | `128`  | integer 128..10240 | Lambda memory (all functions)                 |
+| `apiTimeoutSeconds`     | `30`   | integer 1..900     | api-handler timeout                            |
+| `citationTimeoutSeconds`| `300`  | integer 1..900     | citation-tracker timeout                       |
+| `workerTimeoutSeconds`  | `3`    | integer 1..900     | patch-applier / promoter timeout               |
+| `apiStageName`          | `prod` | string             | API Gateway stage name                         |
+| `apiThrottleRateLimit`  | `50`   | integer 1..10000   | API steady-state requests/sec                  |
+| `apiThrottleBurstLimit` | `100`  | integer 1..10000   | API burst requests                             |
+| `bedrockModelId`        | `global.anthropic.claude-sonnet-4-6` | string | Bedrock model for citation-tracker |
+| `distributionId`        | (none) | string             | CloudFront dist id for promoter invalidation   |
 | `retainData`     | `false`        | truthy                 | Retain stateful resources on stack deletion      |
 
 Examples:
@@ -212,8 +256,9 @@ npm run deploy -- --all -c cidr=10.42.0.0/16 -c maxAzs=2 -c natGateways=2
 ```
 
 To change a **default** for everyone, edit `NETWORK_DEFAULTS`,
-`DATABASE_DEFAULTS`, or `STORAGE_DEFAULTS` in `lib/config/index.ts`. To change a
-value for a **single deploy**, pass it as context — no code change needed.
+`DATABASE_DEFAULTS`, `STORAGE_DEFAULTS`, or `COMPUTE_DEFAULTS` in
+`lib/config/index.ts`. To change a value for a **single deploy**, pass it as
+context — no code change needed.
 
 ## Compliance
 
@@ -224,7 +269,7 @@ before deploying.
 ## Next steps
 
 Flesh out each remaining stack/construct pair in dependency order:
-~~Network~~ → ~~Storage~~ → ~~Database~~ → Compute → Ai → Analytics → Edge → Monitoring.
+~~Network~~ → ~~Storage~~ → ~~Database~~ → ~~Compute~~ → Ai → Analytics → Edge → Monitoring.
 Add resource assertions to a dedicated unit test per stack (see
 `test/unit/network-stack.test.ts` as the template) and live checks to the
 integration suite as you go.

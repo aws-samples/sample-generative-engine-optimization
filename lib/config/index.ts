@@ -89,6 +89,32 @@ export interface StorageConfig {
 }
 
 /**
+ * Compute configuration for the {@link ComputeStack} / BlogApi construct.
+ * Every value has a default (see {@link COMPUTE_DEFAULTS}) and can be overridden
+ * at deploy time via CDK context.
+ */
+export interface ComputeConfig {
+  /** Lambda memory (MB), applied to all functions. */
+  readonly lambdaMemoryMb: number;
+  /** api-handler timeout (seconds). */
+  readonly apiTimeoutSeconds: number;
+  /** citation-tracker timeout (seconds). */
+  readonly citationTimeoutSeconds: number;
+  /** patch-applier / promoter timeout (seconds). */
+  readonly workerTimeoutSeconds: number;
+  /** API Gateway stage name. */
+  readonly apiStageName: string;
+  /** API Gateway throttling: steady-state requests/sec. */
+  readonly apiThrottleRateLimit: number;
+  /** API Gateway throttling: burst requests. */
+  readonly apiThrottleBurstLimit: number;
+  /** CloudWatch metrics namespace used by the workers. */
+  readonly metricsNamespace: string;
+  /** Bedrock model id used by the citation tracker. */
+  readonly bedrockModelId: string;
+}
+
+/**
  * Central configuration for the blog platform. This is the single source of
  * truth; every stack derives names, sizing, and policies from it.
  */
@@ -112,6 +138,8 @@ export interface AppConfig {
   readonly database: DatabaseConfig;
   /** Storage settings (single S3 bucket lifecycle tuning). */
   readonly storage: StorageConfig;
+  /** Compute settings (Lambdas + API Gateway). */
+  readonly compute: ComputeConfig;
 }
 
 const APP_NAME = 'geo-demo';
@@ -152,6 +180,22 @@ export const STORAGE_DEFAULTS: StorageConfig = {
   queryResultRetentionDays: 30,
   contentIaTransitionDays: 90,
   noncurrentVersionRetentionDays: 30,
+};
+
+/**
+ * Centralized compute defaults. Per-function timeouts mirror the discovered
+ * live functions (api 30s, citation 300s, workers 3s). Override via context.
+ */
+export const COMPUTE_DEFAULTS: ComputeConfig = {
+  lambdaMemoryMb: 128,
+  apiTimeoutSeconds: 30,
+  citationTimeoutSeconds: 300,
+  workerTimeoutSeconds: 3,
+  apiStageName: 'prod',
+  apiThrottleRateLimit: 50,
+  apiThrottleBurstLimit: 100,
+  metricsNamespace: 'GEO/CitationTracker',
+  bedrockModelId: 'global.anthropic.claude-sonnet-4-6',
 };
 
 /** Whether stateful data is retained on stack deletion, by default. */
@@ -388,6 +432,70 @@ function resolveStorage(source?: ContextSource): StorageConfig {
 }
 
 /**
+ * Resolve compute config: start from {@link COMPUTE_DEFAULTS}, then apply any
+ * per-value overrides supplied via CDK context, validating each one.
+ *
+ * Supported context keys (all optional):
+ *   -c lambdaMemoryMb=256
+ *   -c apiTimeoutSeconds=30
+ *   -c citationTimeoutSeconds=300
+ *   -c workerTimeoutSeconds=10
+ *   -c apiStageName=prod
+ *   -c apiThrottleRateLimit=100
+ *   -c apiThrottleBurstLimit=200
+ *   -c metricsNamespace=GEO/CitationTracker
+ *   -c bedrockModelId=global.anthropic.claude-sonnet-4-6
+ */
+function resolveCompute(source?: ContextSource): ComputeConfig {
+  const timeoutRange = { min: 1, max: 900 };
+  return {
+    lambdaMemoryMb: intOverride(
+      readContext(source, 'lambdaMemoryMb'),
+      COMPUTE_DEFAULTS.lambdaMemoryMb,
+      'lambdaMemoryMb',
+      { min: 128, max: 10240 },
+    ),
+    apiTimeoutSeconds: intOverride(
+      readContext(source, 'apiTimeoutSeconds'),
+      COMPUTE_DEFAULTS.apiTimeoutSeconds,
+      'apiTimeoutSeconds',
+      timeoutRange,
+    ),
+    citationTimeoutSeconds: intOverride(
+      readContext(source, 'citationTimeoutSeconds'),
+      COMPUTE_DEFAULTS.citationTimeoutSeconds,
+      'citationTimeoutSeconds',
+      timeoutRange,
+    ),
+    workerTimeoutSeconds: intOverride(
+      readContext(source, 'workerTimeoutSeconds'),
+      COMPUTE_DEFAULTS.workerTimeoutSeconds,
+      'workerTimeoutSeconds',
+      timeoutRange,
+    ),
+    apiStageName: String(readContext(source, 'apiStageName') ?? COMPUTE_DEFAULTS.apiStageName),
+    apiThrottleRateLimit: intOverride(
+      readContext(source, 'apiThrottleRateLimit'),
+      COMPUTE_DEFAULTS.apiThrottleRateLimit,
+      'apiThrottleRateLimit',
+      { min: 1, max: 10000 },
+    ),
+    apiThrottleBurstLimit: intOverride(
+      readContext(source, 'apiThrottleBurstLimit'),
+      COMPUTE_DEFAULTS.apiThrottleBurstLimit,
+      'apiThrottleBurstLimit',
+      { min: 1, max: 10000 },
+    ),
+    metricsNamespace: String(
+      readContext(source, 'metricsNamespace') ?? COMPUTE_DEFAULTS.metricsNamespace,
+    ),
+    bedrockModelId: String(
+      readContext(source, 'bedrockModelId') ?? COMPUTE_DEFAULTS.bedrockModelId,
+    ),
+  };
+}
+
+/**
  * Build the active {@link AppConfig}.
  *
  * @param source  The CDK `App` (or anything exposing `node.tryGetContext`) so
@@ -414,5 +522,6 @@ export function getConfig(source?: App | ContextSource): AppConfig {
     network: resolveNetwork(source),
     database: resolveDatabase(source),
     storage: resolveStorage(source),
+    compute: resolveCompute(source),
   };
 }

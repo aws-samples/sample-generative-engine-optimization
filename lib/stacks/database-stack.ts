@@ -54,6 +54,12 @@ export class DatabaseStack extends Stack {
       exportName: `${config.prefix}-db-secret-arn`,
     });
 
+    new CfnOutput(this, 'ClusterArn', {
+      value: this.blogDatabase.cluster.clusterArn,
+      description: 'ARN of the Aurora cluster (for the RDS Data API)',
+      exportName: `${config.prefix}-db-cluster-arn`,
+    });
+
     // cdk-nag: the master secret uses a generated password without rotation by
     // default (rotation is config-gated). Acknowledge for dev; enable rotation
     // (`-c enableRotation=true`) or suppress with a documented reason in prod.
@@ -93,5 +99,10 @@ export class DatabaseStack extends Stack {
   /** The master-credentials secret (for ComputeStack to grant read). */
   public get secret(): secretsmanager.ISecret {
     return this.blogDatabase.secret;
+  }
+
+  /** The Aurora cluster ARN (for the RDS Data API in ComputeStack). */
+  public get clusterArn(): string {
+    return this.blogDatabase.cluster.clusterArn;
   }
 }

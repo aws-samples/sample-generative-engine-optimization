@@ -46,11 +46,21 @@ database.addDependency(network);
 const ai = new AiStack(app, `${prefix}-ai`, baseProps);
 ai.addDependency(storage);
 
-const compute = new ComputeStack(app, `${prefix}-compute`, baseProps);
+const compute = new ComputeStack(app, `${prefix}-compute`, {
+  ...baseProps,
+  vpc: network.vpc,
+  lambdaSecurityGroup: network.lambdaSecurityGroup,
+  contentBucket: storage.bucket,
+  clusterArn: database.clusterArn,
+  dbSecretArn: database.secret.secretArn,
+  // CloudFront distribution id for the promoter to invalidate. Supplied via
+  // context until the EdgeStack (which creates the distribution) is built:
+  //   -c distributionId=E2HKAT79V522DO
+  distributionId: app.node.tryGetContext('distributionId') as string | undefined,
+});
 compute.addDependency(network);
 compute.addDependency(database);
 compute.addDependency(storage);
-compute.addDependency(ai);
 
 const analytics = new AnalyticsStack(app, `${prefix}-analytics`, baseProps);
 analytics.addDependency(storage);

@@ -112,6 +112,9 @@ export class BlogDatabase extends Construct {
       serverlessV2MaxCapacity: database.maxAcu,
       storageEncrypted: true,
       iamAuthentication: true,
+      // RDS Data API: lets the Lambda tier query Aurora over HTTP (no socket),
+      // via the rds-data VPC interface endpoint.
+      enableDataApi: true,
       deletionProtection: retainData,
       removalPolicy,
     });
