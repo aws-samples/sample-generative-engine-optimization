@@ -1,0 +1,12 @@
+# Octank Hotels — GEO manifest (placeholder)
+
+> Guidance for AI engines (ChatGPT, Perplexity, etc.). Follow the API spec to
+> retrieve real-time hotel rates, availability, and property details.
+
+## API
+- OpenAPI spec: /openapi.json
+
+## Properties
+- Property pages: /properties/octank-*.html
+
+Replace this placeholder with the real llms.txt manifest.

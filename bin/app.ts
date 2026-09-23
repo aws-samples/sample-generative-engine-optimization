@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import 'source-map-support/register.js';
+import * as path from 'node:path';
 import { App, Aspects, Tags } from 'aws-cdk-lib';
 import { AwsSolutionsChecks } from 'cdk-nag';
 import { getConfig } from '../lib/config/index.js';
@@ -23,13 +24,17 @@ const config = getConfig(app);
 const { prefix, env } = config;
 const baseProps = { env, config };
 
+// Repo `assets/` directory. The CDK app is always invoked from the repo root
+// (via `cdk` using the `app` command in cdk.json), so cwd is the repo root.
+const assetsDir = path.resolve(process.cwd(), 'assets');
+
 // --- Stacks (stack-per-concern) -------------------------------------------
 // Dependencies are expressed by passing outputs between stacks as each one is
 // fleshed out. For now they are independent placeholders.
 
 const network = new NetworkStack(app, `${prefix}-network`, baseProps);
 
-const storage = new StorageStack(app, `${prefix}-storage`, baseProps);
+const storage = new StorageStack(app, `${prefix}-storage`, { ...baseProps, assetsDir });
 
 const database = new DatabaseStack(app, `${prefix}-database`, {
   ...baseProps,

@@ -1,28 +1,95 @@
-import { Stack } from 'aws-cdk-lib';
+import { CfnOutput, Stack } from 'aws-cdk-lib';
+import type * as s3 from 'aws-cdk-lib/aws-s3';
+import { NagSuppressions } from 'cdk-nag';
 import type { Construct } from 'constructs';
+import { ContentStorage } from '../constructs/content-storage.js';
+import { STORAGE_PREFIXES } from '../config/index.js';
 import type { BaseStackProps } from './stack-props.js';
 
+/** Props for {@link StorageStack}. */
+export interface StorageStackProps extends BaseStackProps {
+  /**
+   * Absolute path to the repo's `assets/` directory. When set, its
+   * web_application/, code/, and db/ subdirectories are uploaded into the
+   * bucket at deploy time.
+   */
+  readonly assetsDir?: string;
+}
+
 /**
- * StorageStack — S3 buckets for the blog platform.
+ * StorageStack — the single S3 bucket for the GEO / hotel-booking platform.
  *
- * Responsibility: object storage. Typically a content/assets bucket served via
- * CloudFront, plus an analytics/data-lake bucket that Athena queries and that
- * receives access/query logs.
- *
- * TODO (flesh out later):
- *  - Content bucket (private, OAC-accessed by CloudFront, versioned)
- *  - Data-lake bucket for analytics + an Athena query-results bucket
- *  - Access logging, lifecycle rules, SSE-KMS, TLS-only bucket policy
- *  - Respect config.retainData for removalPolicy / autoDeleteObjects
+ * Owns one bucket with web_application/, code/, logs/ and staging/ prefixes via
+ * the {@link ContentStorage} construct, and uploads source assets into it.
+ * Consumed by EdgeStack (CloudFront origin + access logs), AnalyticsStack
+ * (Athena results), and ComputeStack (code + DB schema).
  */
 export class StorageStack extends Stack {
-  // public readonly contentBucket: s3.IBucket;
-  // public readonly dataLakeBucket: s3.IBucket;
+  private readonly contentStorage: ContentStorage;
 
-  constructor(scope: Construct, id: string, props: BaseStackProps) {
+  /** Object-key prefixes within the bucket. */
+  public readonly prefixes = STORAGE_PREFIXES;
+
+  constructor(scope: Construct, id: string, props: StorageStackProps) {
     super(scope, id, props);
 
-    // Placeholder — S3 buckets will be added here.
-    void props.config;
+    const { config, assetsDir } = props;
+
+    this.contentStorage = new ContentStorage(this, 'Storage', {
+      prefix: config.prefix,
+      storage: config.storage,
+      retainData: config.retainData,
+      assetsDir,
+    });
+
+    new CfnOutput(this, 'BucketName', {
+      value: this.contentStorage.bucket.bucketName,
+      description: 'Name of the content storage bucket',
+      exportName: `${config.prefix}-bucket-name`,
+    });
+
+    new CfnOutput(this, 'BucketArn', {
+      value: this.contentStorage.bucket.bucketArn,
+      description: 'ARN of the content storage bucket',
+      exportName: `${config.prefix}-bucket-arn`,
+    });
+
+    // The BucketDeployment used to upload assets is a CDK-managed construct: it
+    // provisions an AWS-owned Lambda whose runtime, execution role, and S3
+    // permissions we do not control. These findings are inherent to that
+    // construct and only apply when assets are actually deployed.
+    if (assetsDir) {
+      NagSuppressions.addStackSuppressions(
+        this,
+        [
+          {
+            id: 'AwsSolutions-L1',
+            reason: 'Runtime of the CDK-managed BucketDeployment Lambda is controlled by CDK.',
+          },
+          {
+            id: 'AwsSolutions-IAM4',
+            reason:
+              'The CDK-managed BucketDeployment Lambda uses the AWS-managed ' +
+              'AWSLambdaBasicExecutionRole for CloudWatch Logs access.',
+            appliesTo: [
+              'Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
+            ],
+          },
+          {
+            id: 'AwsSolutions-IAM5',
+            reason:
+              'The CDK-managed BucketDeployment Lambda needs wildcard S3 access ' +
+              'to read the staged asset bucket and write objects to the ' +
+              'destination bucket. Scope is limited to those buckets.',
+          },
+        ],
+        true,
+      );
+    }
+  }
+
+  /** The single storage bucket (for Edge/Analytics/Compute stacks). */
+  public get bucket(): s3.IBucket {
+    return this.contentStorage.bucket;
   }
 }

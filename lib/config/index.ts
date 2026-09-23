@@ -50,6 +50,45 @@ export interface DatabaseConfig {
 }
 
 /**
+ * Object-key prefixes within the single storage bucket. Consumers reference
+ * these constants rather than hard-coding strings, so the layout stays
+ * consistent across stacks.
+ */
+export const STORAGE_PREFIXES = {
+  /** Single-page web application served via CloudFront (OAC origin path). */
+  webApplication: 'web_application/',
+  /** Deploy artifacts: Lambda code, OpenAPI import spec, DB DDL/seed (NOT served). */
+  code: 'code/',
+  /** All logs. */
+  logs: 'logs/',
+  /** CloudFront standard access logs. */
+  cloudFrontLogs: 'logs/cf_logs/',
+  /** Athena query results / logs. */
+  athenaResults: 'logs/athena_logs/',
+  /** S3 server access logs (the bucket logs to itself under this prefix). */
+  s3AccessLogs: 'logs/s3/',
+  /** Feedback-loop staging area: agent corrections awaiting review/promotion. */
+  staging: 'staging/',
+} as const;
+
+/**
+ * Storage configuration for the {@link StorageStack} / ContentStorage construct.
+ * A single bucket holds the content/, logs/ and code/ prefixes; the values here
+ * tune lifecycle behavior. Every value has a default (see
+ * {@link STORAGE_DEFAULTS}) and can be overridden via CDK context.
+ */
+export interface StorageConfig {
+  /** Expire objects under logs/ after this many days. */
+  readonly logRetentionDays: number;
+  /** Expire Athena query results (logs/athena/) after this many days. */
+  readonly queryResultRetentionDays: number;
+  /** Transition content/ objects to Infrequent Access after this many days. */
+  readonly contentIaTransitionDays: number;
+  /** Expire noncurrent object versions after this many days. */
+  readonly noncurrentVersionRetentionDays: number;
+}
+
+/**
  * Central configuration for the blog platform. This is the single source of
  * truth; every stack derives names, sizing, and policies from it.
  */
@@ -71,9 +110,11 @@ export interface AppConfig {
   readonly network: NetworkConfig;
   /** Database settings (Aurora Serverless v2, credentials, proxy, rotation). */
   readonly database: DatabaseConfig;
+  /** Storage settings (single S3 bucket lifecycle tuning). */
+  readonly storage: StorageConfig;
 }
 
-const APP_NAME = 'geo-blog';
+const APP_NAME = 'geo-demo';
 const DEFAULT_ENV: EnvName = 'dev';
 
 /**
@@ -100,6 +141,17 @@ export const DATABASE_DEFAULTS: DatabaseConfig = {
   readers: 0,
   enableProxy: false,
   enableRotation: false,
+};
+
+/**
+ * Centralized storage defaults. Lifecycle windows for the single bucket's
+ * prefixes. Override any of these via CDK context.
+ */
+export const STORAGE_DEFAULTS: StorageConfig = {
+  logRetentionDays: 90,
+  queryResultRetentionDays: 30,
+  contentIaTransitionDays: 90,
+  noncurrentVersionRetentionDays: 30,
 };
 
 /** Whether stateful data is retained on stack deletion, by default. */
@@ -296,6 +348,46 @@ function resolveDatabase(source?: ContextSource): DatabaseConfig {
 }
 
 /**
+ * Resolve storage config: start from {@link STORAGE_DEFAULTS}, then apply any
+ * per-value overrides supplied via CDK context, validating each one.
+ *
+ * Supported context keys (all optional):
+ *   -c logRetentionDays=180
+ *   -c queryResultRetentionDays=14
+ *   -c contentIaTransitionDays=120
+ *   -c noncurrentVersionRetentionDays=60
+ */
+function resolveStorage(source?: ContextSource): StorageConfig {
+  const dayRange = { min: 1, max: 3650 };
+  return {
+    logRetentionDays: intOverride(
+      readContext(source, 'logRetentionDays'),
+      STORAGE_DEFAULTS.logRetentionDays,
+      'logRetentionDays',
+      dayRange,
+    ),
+    queryResultRetentionDays: intOverride(
+      readContext(source, 'queryResultRetentionDays'),
+      STORAGE_DEFAULTS.queryResultRetentionDays,
+      'queryResultRetentionDays',
+      dayRange,
+    ),
+    contentIaTransitionDays: intOverride(
+      readContext(source, 'contentIaTransitionDays'),
+      STORAGE_DEFAULTS.contentIaTransitionDays,
+      'contentIaTransitionDays',
+      dayRange,
+    ),
+    noncurrentVersionRetentionDays: intOverride(
+      readContext(source, 'noncurrentVersionRetentionDays'),
+      STORAGE_DEFAULTS.noncurrentVersionRetentionDays,
+      'noncurrentVersionRetentionDays',
+      dayRange,
+    ),
+  };
+}
+
+/**
  * Build the active {@link AppConfig}.
  *
  * @param source  The CDK `App` (or anything exposing `node.tryGetContext`) so
@@ -321,5 +413,6 @@ export function getConfig(source?: App | ContextSource): AppConfig {
     retainData,
     network: resolveNetwork(source),
     database: resolveDatabase(source),
+    storage: resolveStorage(source),
   };
 }

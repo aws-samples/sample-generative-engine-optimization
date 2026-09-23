@@ -1,0 +1,22 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Octank Hotels API (clean, served)",
+    "version": "0.1.0",
+    "description": "CLEAN OpenAPI spec served to agents. The augmented API Gateway import spec lives at code/openapi-apigw-import.json."
+  },
+  "paths": {
+    "/properties": {
+      "get": {
+        "summary": "List hotel properties",
+        "responses": { "200": { "description": "A list of properties" } }
+      }
+    },
+    "/availability": {
+      "get": {
+        "summary": "Check room availability and rates",
+        "responses": { "200": { "description": "Availability results" } }
+      }
+    }
+  }
+}

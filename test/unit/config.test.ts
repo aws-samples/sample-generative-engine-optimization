@@ -10,13 +10,13 @@ describe('getConfig — defaults', () => {
   it('resolves the single dev environment', () => {
     const config = configWith();
     expect(config.envName).toBe('dev');
-    expect(config.prefix).toBe('geo-blog-dev');
+    expect(config.prefix).toBe('geo-demo-dev');
     expect(config.retainData).toBe(false);
   });
 
   it('applies the standard project tags', () => {
     const { tags } = configWith();
-    expect(tags).toMatchObject({ Project: 'geo-blog', Environment: 'dev', ManagedBy: 'cdk' });
+    expect(tags).toMatchObject({ Project: 'geo-demo', Environment: 'dev', ManagedBy: 'cdk' });
   });
 
   it('uses the centralized network defaults when no overrides are given', () => {

@@ -4,9 +4,9 @@ AWS CDK (TypeScript) infrastructure for a blog platform. The app is organized
 as a set of small, single-responsibility stacks so each component can be built
 out and deployed independently.
 
-> Status: **in progress**. `NetworkStack` and `DatabaseStack` are implemented;
-> the remaining stacks are documented placeholders that synthesize cleanly.
-> Components are fleshed out incrementally.
+> Status: **in progress**. `NetworkStack`, `DatabaseStack`, and `StorageStack`
+> are implemented; the remaining stacks are documented placeholders that
+> synthesize cleanly. Components are fleshed out incrementally.
 
 ## Architecture
 
@@ -35,7 +35,7 @@ out and deployed independently.
 | Stack             | Component            | Status | Responsibility                                   |
 | ----------------- | -------------------- | ------ | ------------------------------------------------ |
 | `NetworkStack`    | VPC                  | ✅ done | Subnets, NAT, security groups, VPC endpoints, flow logs |
-| `StorageStack`    | S3                   | ⬜ todo | Content, data-lake, and Athena query buckets     |
+| `StorageStack`    | S3                   | ✅ done | Single bucket: web_application/, code/, logs/, staging/ + asset upload |
 | `DatabaseStack`   | Aurora               | ✅ done | Serverless v2 cluster + Secrets Manager creds    |
 | `ComputeStack`    | Lambda + API         | ⬜ todo | Blog backend functions and API surface           |
 | `AiStack`         | Bedrock agent        | ⬜ todo | Generative AI features (agent, KB, action groups)|
@@ -67,6 +67,43 @@ Each stack composes a matching reusable construct from `lib/constructs`
 
 Outputs `VpcId` and `LambdaSecurityGroupId` are exported for cross-stack use by
 `DatabaseStack` and `ComputeStack`.
+
+### Storage layer (implemented)
+
+`StorageStack` → `ContentStorage` construct provisions **one** S3 bucket
+(deterministic, collision-safe name `geo-demo-content-<account>-<region>`) with
+these prefixes:
+
+| Prefix              | Purpose                                              | Served? |
+| ------------------- | ---------------------------------------------------- | ------- |
+| `web_application/`  | Single-page app + served files (CloudFront OAC origin) | ✅ |
+| `code/`             | Lambda code, OpenAPI import spec, DB DDL/seed (`code/db/`) | ❌ |
+| `logs/cf_logs/`     | CloudFront standard access logs                       | ❌ |
+| `logs/athena_logs/` | Athena query results                                  | ❌ |
+| `logs/s3/`          | S3 server access logs (bucket logs to itself)         | ❌ |
+| `staging/`          | Feedback-loop area (agent corrections awaiting review) | ❌ |
+
+Secure defaults: all public access blocked, S3-managed encryption, TLS-only
+bucket policy, versioning, and self server-access logging. Bucket **ACLs are
+enabled** (`BucketOwnerPreferred`) so CloudFront native logging can write to
+`logs/cf_logs/`. Per-prefix lifecycle rules expire logs/query-results and
+transition `web_application/` to Infrequent Access. Removal + object auto-delete
+are driven by `retainData`.
+
+**Asset upload.** The repo's `assets/` tree is uploaded into the bucket at
+deploy time via CDK `BucketDeployment`:
+
+| Local path                | Bucket destination |
+| ------------------------- | ------------------ |
+| `assets/web_application/` | `web_application/` |
+| `assets/code/`            | `code/`            |
+| `assets/db/`              | `code/db/`         |
+
+These are placeholder files (SPA stub, four Python Lambda handlers, OpenAPI
+specs, hotel booking `schema.sql` + `seed.sql`) — replace with the real content
+as it lands. Outputs `BucketName` and `BucketArn` are exported for consumers.
+The CDK-managed BucketDeployment Lambda carries documented cdk-nag suppressions
+(L1/IAM4/IAM5).
 
 ### Database layer (implemented)
 
@@ -158,6 +195,10 @@ Account/region resolve from the CDK CLI environment or the
 | `readers`        | `0`            | integer 0..15          | Reader instances (0 = writer only)               |
 | `enableProxy`    | `false`        | true/false             | Provision an RDS Proxy (connection pooling)      |
 | `enableRotation` | `false`        | true/false             | Enable Secrets Manager credential rotation       |
+| `logRetentionDays`              | `90` | integer 1..3650 | Expire objects under `logs/` after N days     |
+| `queryResultRetentionDays`      | `30` | integer 1..3650 | Expire Athena results (`logs/athena_logs/`)   |
+| `contentIaTransitionDays`       | `90` | integer 1..3650 | Transition `web_application/` to Infrequent Access |
+| `noncurrentVersionRetentionDays`| `30` | integer 1..3650 | Expire noncurrent object versions             |
 | `retainData`     | `false`        | truthy                 | Retain stateful resources on stack deletion      |
 
 Examples:
@@ -170,9 +211,9 @@ npm run deploy -- --all
 npm run deploy -- --all -c cidr=10.42.0.0/16 -c maxAzs=2 -c natGateways=2
 ```
 
-To change a **default** for everyone, edit `NETWORK_DEFAULTS` or
-`DATABASE_DEFAULTS` in `lib/config/index.ts`. To change a value for a **single
-deploy**, pass it as context — no code change needed.
+To change a **default** for everyone, edit `NETWORK_DEFAULTS`,
+`DATABASE_DEFAULTS`, or `STORAGE_DEFAULTS` in `lib/config/index.ts`. To change a
+value for a **single deploy**, pass it as context — no code change needed.
 
 ## Compliance
 
@@ -183,7 +224,7 @@ before deploying.
 ## Next steps
 
 Flesh out each remaining stack/construct pair in dependency order:
-~~Network~~ → Storage → ~~Database~~ → Compute → Ai → Analytics → Edge → Monitoring.
+~~Network~~ → ~~Storage~~ → ~~Database~~ → Compute → Ai → Analytics → Edge → Monitoring.
 Add resource assertions to a dedicated unit test per stack (see
 `test/unit/network-stack.test.ts` as the template) and live checks to the
 integration suite as you go.

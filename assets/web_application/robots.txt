@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+# GEO: point AI agents/crawlers at the machine-readable manifest and API spec.
+# See llms.txt for guidance.
+Sitemap: /sitemap.xml

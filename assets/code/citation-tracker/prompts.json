@@ -1,0 +1,7 @@
+{
+  "description": "Prompt templates for the citation-tracker (placeholder).",
+  "prompts": {
+    "extract_citations": "Placeholder prompt: identify which property pages and API responses were cited.",
+    "score_relevance": "Placeholder prompt: score the relevance of returned hotel results."
+  }
+}
