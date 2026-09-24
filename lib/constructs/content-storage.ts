@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import { Aws, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import { Construct } from 'constructs';
@@ -104,6 +105,31 @@ export class ContentStorage extends Construct {
         },
       ],
     });
+
+    // --- CloudFront OAC read access ----------------------------------------
+    // The EdgeStack imports this bucket read-only (to avoid a Storage<->Edge
+    // dependency cycle), so `withOriginAccessControl` cannot write this policy
+    // for us. We add it here, in the stack that owns the bucket. The SourceArn
+    // is wildcarded to any distribution in this account to avoid referencing the
+    // EdgeStack (which would recreate the cycle); CloudFront still only reads via
+    // its own OAC-signed requests.
+    this.bucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'AllowCloudFrontOacRead',
+        effect: iam.Effect.ALLOW,
+        principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
+        actions: ['s3:GetObject'],
+        resources: [this.bucket.arnForObjects(`${STORAGE_PREFIXES.webApplication}*`)],
+        conditions: {
+          StringEquals: {
+            'AWS:SourceAccount': Aws.ACCOUNT_ID,
+          },
+          ArnLike: {
+            'AWS:SourceArn': `arn:${Aws.PARTITION}:cloudfront::${Aws.ACCOUNT_ID}:distribution/*`,
+          },
+        },
+      }),
+    );
 
     // --- Upload source assets (content, code, DB schema) -------------------
     if (assetsDir) {

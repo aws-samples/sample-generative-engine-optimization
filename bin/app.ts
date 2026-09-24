@@ -54,7 +54,9 @@ const compute = new ComputeStack(app, `${prefix}-compute`, {
   clusterArn: database.clusterArn,
   dbSecretArn: database.secret.secretArn,
   // CloudFront distribution id for the promoter to invalidate. Supplied via
-  // context until the EdgeStack (which creates the distribution) is built:
+  // context to avoid a Compute<->Edge cycle (Edge needs Compute's API origin,
+  // and the promoter needs Edge's distribution id). After the first deploy,
+  // pass the EdgeStack's DistributionId output back in:
   //   -c distributionId=E2HKAT79V522DO
   distributionId: app.node.tryGetContext('distributionId') as string | undefined,
 });
@@ -65,7 +67,14 @@ compute.addDependency(storage);
 const analytics = new AnalyticsStack(app, `${prefix}-analytics`, baseProps);
 analytics.addDependency(storage);
 
-const edge = new EdgeStack(app, `${prefix}-edge`, baseProps);
+const edge = new EdgeStack(app, `${prefix}-edge`, {
+  ...baseProps,
+  // Pass the bucket NAME (imported read-only in EdgeStack) rather than the live
+  // construct, to avoid a Storage<->Edge dependency cycle from the OAC policy.
+  contentBucketName: storage.bucket.bucketName,
+  apiOriginDomain: compute.apiOriginDomain,
+  apiStageName: compute.apiStageName,
+});
 edge.addDependency(storage);
 edge.addDependency(compute);
 

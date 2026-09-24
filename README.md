@@ -4,9 +4,10 @@ AWS CDK (TypeScript) infrastructure for a blog platform. The app is organized
 as a set of small, single-responsibility stacks so each component can be built
 out and deployed independently.
 
-> Status: **in progress**. `NetworkStack`, `DatabaseStack`, `StorageStack`, and
-> `ComputeStack` are implemented; the remaining stacks are documented
-> placeholders that synthesize cleanly. Components are fleshed out incrementally.
+> Status: **in progress**. `NetworkStack`, `DatabaseStack`, `StorageStack`,
+> `ComputeStack`, and `EdgeStack` are implemented; the remaining stacks are
+> documented placeholders that synthesize cleanly. Components are fleshed out
+> incrementally.
 
 ## Architecture
 
@@ -40,7 +41,7 @@ out and deployed independently.
 | `ComputeStack`    | Lambda + API         | ✅ done | 4 VPC Lambdas + public REST API (Octank Hospitality) |
 | `AiStack`         | Bedrock agent        | ⬜ todo | Generative AI features (agent, KB, action groups)|
 | `AnalyticsStack`  | Athena               | ⬜ todo | Glue catalog + Athena workgroup over S3 data     |
-| `EdgeStack`       | CloudFront           | ⬜ todo | Public CDN, S3 (OAC) + API routing               |
+| `EdgeStack`       | CloudFront           | ✅ done | SPA via S3 (OAC) + `/api/*` to API, logs to `logs/cf_logs/` |
 | `MonitoringStack` | CloudWatch           | ⬜ todo | Log groups, alarms, dashboard, SNS alerting      |
 
 Each stack composes a matching reusable construct from `lib/constructs`
@@ -166,6 +167,36 @@ Documented cdk-nag suppressions cover the intentional public API (APIG4/COG4),
 the pinned python3.13 runtime (L1), managed exec/VPC roles (IAM4), and
 scoped-wildcard grants (IAM5).
 
+### Edge layer (implemented)
+
+`EdgeStack` → `BlogDistribution` construct provisions the CloudFront distribution:
+
+- **Default behavior** → the S3 content bucket via **Origin Access Control
+  (OAC)**, origin path `/web_application`, `index.html` root, managed
+  CachingOptimized policy, HTTPS-only, security-headers response policy.
+- **`/api/*` behavior** → the ComputeStack REST API origin (CachingDisabled,
+  AllViewerExceptHostHeader), so external agents reach the API on the same
+  domain.
+- **Standard access logging** to the content bucket under `logs/cf_logs/`
+  (this is why the StorageStack enables bucket ACLs).
+- The SPA content is the **real** site synced from
+  `s3://geo-demo-content-a2z4/web-application/` into `assets/web_application/`
+  (index.html, llms.txt, openapi.json, robots.txt, sitemap.xml, 25 property
+  pages) and uploaded by the StorageStack.
+- Outputs `DistributionId` and `DistributionDomainName`.
+
+**Cross-stack cycle avoidance.** EdgeStack imports the content bucket
+**read-only by name** (`Bucket.fromBucketName`) rather than consuming the live
+construct. This prevents `withOriginAccessControl` from writing a back-reference
+bucket policy into the StorageStack (which would create a Storage↔Edge cycle);
+instead the OAC `s3:GetObject` statement is added explicitly in the StorageStack
+with a `distribution/*` SourceArn condition. Likewise, the promoter's
+`distributionId` is passed via context, not a live Edge→Compute reference, to
+avoid a Compute↔Edge cycle.
+
+Documented cdk-nag suppressions cover the demo distribution's default
+certificate and absence of WAF/geo-restrictions (CFR1/CFR2/CFR4).
+
 ## Project layout
 
 ```
@@ -243,6 +274,9 @@ Account/region resolve from the CDK CLI environment or the
 | `apiThrottleBurstLimit` | `100`  | integer 1..10000   | API burst requests                             |
 | `bedrockModelId`        | `global.anthropic.claude-sonnet-4-6` | string | Bedrock model for citation-tracker |
 | `distributionId`        | (none) | string             | CloudFront dist id for promoter invalidation   |
+| `priceClass`            | `all`  | all / 200 / 100    | CloudFront price class                          |
+| `defaultRootObject`     | `index.html` | string       | SPA root object                                 |
+| `apiPathPattern`        | `/api/*` | string           | Path routed to the API origin                   |
 | `retainData`     | `false`        | truthy                 | Retain stateful resources on stack deletion      |
 
 Examples:
@@ -256,8 +290,8 @@ npm run deploy -- --all -c cidr=10.42.0.0/16 -c maxAzs=2 -c natGateways=2
 ```
 
 To change a **default** for everyone, edit `NETWORK_DEFAULTS`,
-`DATABASE_DEFAULTS`, `STORAGE_DEFAULTS`, or `COMPUTE_DEFAULTS` in
-`lib/config/index.ts`. To change a value for a **single deploy**, pass it as
+`DATABASE_DEFAULTS`, `STORAGE_DEFAULTS`, `COMPUTE_DEFAULTS`, or `EDGE_DEFAULTS`
+in `lib/config/index.ts`. To change a value for a **single deploy**, pass it as
 context — no code change needed.
 
 ## Compliance
@@ -269,7 +303,7 @@ before deploying.
 ## Next steps
 
 Flesh out each remaining stack/construct pair in dependency order:
-~~Network~~ → ~~Storage~~ → ~~Database~~ → ~~Compute~~ → Ai → Analytics → Edge → Monitoring.
+~~Network~~ → ~~Storage~~ → ~~Database~~ → ~~Compute~~ → Ai → Analytics → ~~Edge~~ → Monitoring.
 Add resource assertions to a dedicated unit test per stack (see
 `test/unit/network-stack.test.ts` as the template) and live checks to the
 integration suite as you go.

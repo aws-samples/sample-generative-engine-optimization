@@ -63,6 +63,11 @@ export class BlogApi extends Construct {
   /** The invoke URL of the deployed API stage. */
   public readonly apiEndpoint: string;
 
+  /** The API Gateway origin domain (host only) for a CloudFront origin. */
+  public get apiOriginDomain(): string {
+    return `${this.api.restApiId}.execute-api.${this.api.env.region}.amazonaws.com`;
+  }
+
   constructor(scope: Construct, id: string, props: BlogApiProps) {
     super(scope, id);
 

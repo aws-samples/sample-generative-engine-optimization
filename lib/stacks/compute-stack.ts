@@ -116,4 +116,14 @@ export class ComputeStack extends Stack {
   public get apiEndpoint(): string {
     return this.blogApi.apiEndpoint;
   }
+
+  /** API Gateway origin domain (host only) for the CloudFront API behavior. */
+  public get apiOriginDomain(): string {
+    return this.blogApi.apiOriginDomain;
+  }
+
+  /** API Gateway stage name (used as the CloudFront API origin path). */
+  public get apiStageName(): string {
+    return this.blogApi.api.deploymentStage.stageName;
+  }
 }

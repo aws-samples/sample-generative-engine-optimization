@@ -1,12 +1,73 @@
-# Octank Hotels — GEO manifest (placeholder)
+# Octank Hospitality — AI Content Directory
+# Auto-generated from the property database. Served from the site root: /llms.txt
+#
+# Helps AI engines (ChatGPT, Perplexity, Google AI Overviews, Claude, Amazon Rufus)
+# discover and accurately describe our properties.
 
-> Guidance for AI engines (ChatGPT, Perplexity, etc.). Follow the API spec to
-> retrieve real-time hotel rates, availability, and property details.
+## About
+A hospitality group operating 25 properties across 8 cities under five brands:
+- Octank Hotels (midscale) — 8 properties
+- Octank Suites (upscale) — 4 properties
+- Octank Inn (economy) — 5 properties
+- Octank Resorts (boutique) — 5 properties
+- Octank Residences (midscale) — 3 properties
 
-## API
-- OpenAPI spec: /openapi.json
+## Austin, TX
 
-## Properties
-- Property pages: /properties/octank-*.html
+/properties/octank-suites-austin-downtown.html: Octank Suites Austin Downtown — Octank Suites (upscale), 4.5★ (1104 reviews), 180 rooms. Restaurant On-Site, Room Service, Fitness Center, Spa Services, Free Wi-Fi, Coworking Space.
+/properties/octank-hotels-austin-airport.html: Octank Hotels Austin Airport — Octank Hotels (midscale), 4.0★ (1823 reviews), 200 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, Pet-Friendly, ADA Accessible, Smoke-Free.
+/properties/octank-inn-austin-north.html: Octank Inn Austin North — Octank Inn (economy), 3.6★ (743 reviews), 110 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, ADA Accessible, Smoke-Free, Outdoor Pool.
 
-Replace this placeholder with the real llms.txt manifest.
+## Boulder, CO
+
+/properties/octank-resorts-boulder-pearl-street.html: Octank Resorts Boulder Pearl Street — Octank Resorts (boutique), 4.6★ (412 reviews), 72 rooms. Restaurant On-Site, Coffee Bar, Fitness Center, Spa Services, Free Wi-Fi, Bike Rentals.
+/properties/octank-resorts-boulder-flatirons.html: Octank Resorts Boulder Flatirons — Octank Resorts (boutique), 4.4★ (287 reviews), 60 rooms. Restaurant On-Site, Coffee Bar, Fitness Center, Spa Services, Free Wi-Fi, Bike Rentals.
+/properties/octank-residences-boulder-extended-stay.html: Octank Residences Boulder Extended Stay — Octank Residences (midscale), 4.2★ (534 reviews), 110 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, Pet-Friendly, ADA Accessible, Smoke-Free.
+
+## Colorado Springs, CO
+
+/properties/octank-hotels-colorado-springs-garden.html: Octank Hotels Colorado Springs Garden — Octank Hotels (midscale), 4.4★ (2210 reviews), 310 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, Pet-Friendly, ADA Accessible, Smoke-Free.
+/properties/octank-inn-colorado-springs.html: Octank Inn Colorado Springs — Octank Inn (economy), 3.5★ (890 reviews), 100 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, ADA Accessible, Smoke-Free.
+
+## Denver, CO
+
+/properties/octank-suites-cherry-creek.html: Octank Suites Cherry Creek — Octank Suites (upscale), 4.6★ (823 reviews), 95 rooms. Restaurant On-Site, Room Service, Fitness Center, Spa Services, Free Wi-Fi, Coworking Space.
+/properties/octank-suites-denver-rino.html: Octank Suites Denver RiNo — Octank Suites (upscale), 4.5★ (596 reviews), 145 rooms. Restaurant On-Site, Room Service, Fitness Center, Spa Services, Free Wi-Fi, Coworking Space.
+/properties/octank-hotels-denver-downtown.html: Octank Hotels Denver Downtown — Octank Hotels (midscale), 4.3★ (1847 reviews), 245 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, Pet-Friendly, ADA Accessible, Smoke-Free.
+/properties/octank-hotels-denver-tech-center.html: Octank Hotels Denver Tech Center — Octank Hotels (midscale), 4.1★ (1520 reviews), 180 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, Pet-Friendly, ADA Accessible, Smoke-Free.
+/properties/octank-hotels-denver-airport.html: Octank Hotels Denver Airport — Octank Hotels (midscale), 4.0★ (1985 reviews), 210 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, Pet-Friendly, ADA Accessible, Smoke-Free.
+/properties/octank-inn-denver-west.html: Octank Inn Denver West — Octank Inn (economy), 3.8★ (1667 reviews), 150 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, ADA Accessible, Smoke-Free, Pet-Friendly.
+/properties/octank-inn-denver-federal.html: Octank Inn Denver Federal — Octank Inn (economy), 3.6★ (1260 reviews), 120 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, ADA Accessible, Smoke-Free, EV Charging.
+
+## Fort Collins, CO
+
+/properties/octank-hotels-fort-collins-old-town.html: Octank Hotels Fort Collins Old Town — Octank Hotels (midscale), 4.2★ (945 reviews), 140 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, Pet-Friendly, ADA Accessible, Smoke-Free.
+/properties/octank-inn-fort-collins.html: Octank Inn Fort Collins — Octank Inn (economy), 3.7★ (612 reviews), 90 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, ADA Accessible, Smoke-Free, Hot Tub.
+
+## Nashville, TN
+
+/properties/octank-resorts-nashville-gulch.html: Octank Resorts Nashville Gulch — Octank Resorts (boutique), 4.6★ (678 reviews), 90 rooms. Restaurant On-Site, Coffee Bar, Fitness Center, Spa Services, Free Wi-Fi, Bike Rentals.
+/properties/octank-suites-nashville-midtown.html: Octank Suites Nashville Midtown — Octank Suites (upscale), 4.4★ (534 reviews), 130 rooms. Restaurant On-Site, Room Service, Fitness Center, Spa Services, Free Wi-Fi, Coworking Space.
+/properties/octank-hotels-nashville-airport.html: Octank Hotels Nashville Airport — Octank Hotels (midscale), 4.1★ (1456 reviews), 220 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, Pet-Friendly, ADA Accessible, Smoke-Free.
+
+## Scottsdale, AZ
+
+/properties/octank-resorts-scottsdale-old-town.html: Octank Resorts Scottsdale Old Town — Octank Resorts (boutique), 4.7★ (892 reviews), 65 rooms. Restaurant On-Site, Coffee Bar, Fitness Center, Spa Services, Free Wi-Fi, Bike Rentals.
+/properties/octank-hotels-scottsdale-north.html: Octank Hotels Scottsdale North — Octank Hotels (midscale), 4.2★ (1340 reviews), 175 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, Pet-Friendly, ADA Accessible, Smoke-Free.
+/properties/octank-residences-scottsdale-extended.html: Octank Residences Scottsdale Extended — Octank Residences (midscale), 4.0★ (623 reviews), 95 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, Pet-Friendly, ADA Accessible, Smoke-Free.
+
+## Vail, CO
+
+/properties/octank-resorts-vail-village.html: Octank Resorts Vail Village — Octank Resorts (boutique), 4.7★ (356 reviews), 48 rooms. Restaurant On-Site, Coffee Bar, Fitness Center, Spa Services, Free Wi-Fi, Bike Rentals.
+/properties/octank-residences-vail-valley.html: Octank Residences Vail Valley — Octank Residences (midscale), 4.1★ (478 reviews), 85 rooms. Free Breakfast, Fitness Center, Free Wi-Fi, Pet-Friendly, ADA Accessible, Smoke-Free.
+
+## Key Pages
+/amenities: Full amenity list searchable by property
+/rewards: Loyalty program details and member rates
+/faq: Booking, cancellation, pet, and accessibility policies
+
+## API Access (for AI agents)
+/api/v1/properties: Search properties by city, amenities, price, availability
+/api/v1/properties/{id}/availability: Live room availability by date
+/api/v1/properties/{id}/rates: Nightly rates by room type
+/openapi.json: Full OpenAPI 3.0 specification for agent action groups

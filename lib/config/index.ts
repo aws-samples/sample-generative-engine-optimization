@@ -115,6 +115,20 @@ export interface ComputeConfig {
 }
 
 /**
+ * Edge configuration for the {@link EdgeStack} / BlogDistribution construct.
+ * Every value has a default (see {@link EDGE_DEFAULTS}) and can be overridden
+ * at deploy time via CDK context.
+ */
+export interface EdgeConfig {
+  /** CloudFront price class: 'all' | '200' | '100'. */
+  readonly priceClass: 'all' | '200' | '100';
+  /** Default root object served for the SPA. */
+  readonly defaultRootObject: string;
+  /** Path pattern routed to the API origin. */
+  readonly apiPathPattern: string;
+}
+
+/**
  * Central configuration for the blog platform. This is the single source of
  * truth; every stack derives names, sizing, and policies from it.
  */
@@ -140,6 +154,8 @@ export interface AppConfig {
   readonly storage: StorageConfig;
   /** Compute settings (Lambdas + API Gateway). */
   readonly compute: ComputeConfig;
+  /** Edge settings (CloudFront distribution). */
+  readonly edge: EdgeConfig;
 }
 
 const APP_NAME = 'geo-demo';
@@ -196,6 +212,16 @@ export const COMPUTE_DEFAULTS: ComputeConfig = {
   apiThrottleBurstLimit: 100,
   metricsNamespace: 'GEO/CitationTracker',
   bedrockModelId: 'global.anthropic.claude-sonnet-4-6',
+};
+
+/**
+ * Centralized edge defaults. Mirrors the reference distribution (PriceClass_All,
+ * index.html root). Override via context.
+ */
+export const EDGE_DEFAULTS: EdgeConfig = {
+  priceClass: 'all',
+  defaultRootObject: 'index.html',
+  apiPathPattern: '/api/*',
 };
 
 /** Whether stateful data is retained on stack deletion, by default. */
@@ -496,6 +522,30 @@ function resolveCompute(source?: ContextSource): ComputeConfig {
 }
 
 /**
+ * Resolve edge config: start from {@link EDGE_DEFAULTS}, then apply any
+ * per-value overrides supplied via CDK context, validating each one.
+ *
+ * Supported context keys (all optional):
+ *   -c priceClass=100        (one of: all, 200, 100)
+ *   -c defaultRootObject=index.html
+ *   -c apiPathPattern=/api/*
+ */
+function resolveEdge(source?: ContextSource): EdgeConfig {
+  const rawPrice = readContext(source, 'priceClass');
+  const priceClass = rawPrice === undefined || rawPrice === '' ? EDGE_DEFAULTS.priceClass : String(rawPrice);
+  if (!['all', '200', '100'].includes(priceClass)) {
+    throw new Error(`Context "priceClass" must be one of all|200|100, got "${priceClass}".`);
+  }
+  return {
+    priceClass: priceClass as EdgeConfig['priceClass'],
+    defaultRootObject: String(
+      readContext(source, 'defaultRootObject') ?? EDGE_DEFAULTS.defaultRootObject,
+    ),
+    apiPathPattern: String(readContext(source, 'apiPathPattern') ?? EDGE_DEFAULTS.apiPathPattern),
+  };
+}
+
+/**
  * Build the active {@link AppConfig}.
  *
  * @param source  The CDK `App` (or anything exposing `node.tryGetContext`) so
@@ -523,5 +573,6 @@ export function getConfig(source?: App | ContextSource): AppConfig {
     database: resolveDatabase(source),
     storage: resolveStorage(source),
     compute: resolveCompute(source),
+    edge: resolveEdge(source),
   };
 }
