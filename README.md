@@ -1,34 +1,53 @@
 # generative-engine-optimization-aws
 
-AWS CDK (TypeScript) infrastructure for a blog platform. The app is organized
-as a set of small, single-responsibility stacks so each component can be built
-out and deployed independently.
+AWS CDK (TypeScript) infrastructure for the **Octank Hospitality** platform — a
+Generative Engine Optimization (GEO) demo for a hotel-booking system. External
+AI engines (ChatGPT, Perplexity, etc.) and browsers reach a single-page app and
+a public REST API; the API queries an Aurora database, and a set of worker
+Lambdas run a content feedback loop. The app is organized as a set of small,
+single-responsibility stacks so each component can be built out and deployed
+independently.
 
 > Status: **in progress**. `NetworkStack`, `DatabaseStack`, `StorageStack`,
 > `ComputeStack`, `EdgeStack`, and `MonitoringStack` (logging module) are
 > implemented; only `AiStack` and `AnalyticsStack` remain as documented
 > placeholders. Components are fleshed out incrementally.
 
+📚 **Technical documentation** lives in [`docs/`](docs/README.md): architecture,
+deployment, configuration, and security.
+
 ## Architecture
 
 ```
-                          ┌──────────────┐
-        internet ───────► │  CloudFront  │  (EdgeStack)
-                          └──────┬───────┘
-                     static │           │ /api/*
-                 (S3 OAC)   ▼           ▼
-              ┌───────────────┐   ┌──────────────┐
-              │ Content bucket│   │  Lambda + API │  (ComputeStack)
-              │  (StorageStack│   │              │
-              └───────────────┘   └───┬───────┬──┘
-                                       │       │
-                            ┌──────────▼─┐   ┌─▼───────────────┐
-                            │   Aurora   │   │  Bedrock agent  │  (AiStack)
-                            │(DatabaseStk)│   └─────────────────┘
-                            └────────────┘
-   data-lake bucket ──► Glue + Athena (AnalyticsStack)
-   everything ───────► CloudWatch logs, alarms, dashboard (MonitoringStack)
-   VPC / subnets / SGs / endpoints (NetworkStack) underpins DB + compute
+   AI engines / browsers
+            │  HTTPS
+            ▼
+   ┌──────────────────┐
+   │    CloudFront     │  (EdgeStack)
+   └───┬──────────┬────┘
+ default│          │ /api/*
+ (S3 OAC)          │
+       ▼           ▼
+ ┌───────────┐  ┌──────────────────┐
+ │ S3 content│  │ REST API (APIGW)  │  (ComputeStack)
+ │  bucket   │  └────────┬─────────┘
+ │(StorageStk)│          │ Lambda proxy
+ └───────────┘  ┌────────▼─────────┐
+                │  api-handler λ    │  (VPC)
+                └────────┬─────────┘
+                         │ RDS Data API (HTTP)
+                         ▼
+                ┌──────────────────┐
+                │ Aurora PostgreSQL │  (DatabaseStack)
+                │  Serverless v2    │
+                └──────────────────┘
+
+ Worker Lambdas (VPC, ComputeStack): citation-tracker -> Bedrock;
+   patch-applier -> staging/;  promoter -> web_application/ + CloudFront invalidation
+
+ NetworkStack   : VPC, subnets, 1 NAT, VPC endpoints (incl. RDS Data API), SGs
+ MonitoringStack: VPC Flow Logs -> S3 logs/vpc_flow/ (logging module)
+ AiStack        : Bedrock agent (todo)      AnalyticsStack: Athena (todo)
 ```
 
 ### Stacks (`lib/stacks`)
@@ -66,7 +85,9 @@ Each stack composes a matching reusable construct from `lib/constructs`
   - `lambda-sg` — attached to the API functions; no inbound, egress allowed.
   - `database-sg` — Aurora; inbound `5432` **only** from `lambda-sg`.
   - `endpoint-sg` — interface endpoints; inbound `443` from `lambda-sg`.
-- **VPC flow logs** to CloudWatch (retention + removal driven by `retainData`).
+
+VPC Flow Logs are **not** defined here — the MonitoringStack owns them and
+delivers to S3 (`logs/vpc_flow/`); see the logging section below.
 
 Outputs `VpcId` and `LambdaSecurityGroupId` are exported for cross-stack use by
 `DatabaseStack` and `ComputeStack`.
@@ -231,11 +252,13 @@ the NetworkStack because the flow log legitimately lives in another stack.
 
 ```
 bin/app.ts            CDK app entry point — instantiates + wires all stacks
-lib/config/           Central config: defaults + CDK-context overrides (network, tags, naming)
-lib/stacks/           One stack per component (NetworkStack done; others skeletons)
+lib/config/           Central config: defaults + CDK-context overrides + validation
+lib/stacks/           One stack per component (6 of 8 implemented; ai/analytics todo)
 lib/constructs/       Reusable L3 constructs, one per component
+assets/               Content uploaded to S3: web_application/, code/ (Lambdas), db/ (DDL+seed)
 test/unit/            Jest synthesis tests (fast, no AWS calls)
 test/integration/     Jest tests against deployed resources (self-skip w/o env)
+docs/                 Technical documentation (architecture, deployment, config, security)
 cdk.json              CDK app command + feature flags
 ```
 
@@ -269,10 +292,10 @@ npm run deploy -- --all -c cidr=10.42.0.0/16
 
 There is a single environment (`dev`). All configuration is **centralized** in
 `lib/config/index.ts` — one source of truth, no values scattered across stacks.
-Each tunable has a **default** (in `NETWORK_DEFAULTS` / `DEFAULT_RETAIN_DATA`)
-that a user can **override at deploy time via CDK context** (`-c key=value`)
-without editing any source. Overrides are validated, so a bad value fails fast
-at synth with a clear message.
+Each tunable has a **default** (in the `*_DEFAULTS` objects) that a user can
+**override at deploy time via CDK context** (`-c key=value`) without editing any
+source. Overrides are validated, so a bad value fails fast at synth with a clear
+message. A full reference is in [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
 
 Account/region resolve from the CDK CLI environment or the
 `CDK_DEPLOY_ACCOUNT` / `CDK_DEPLOY_REGION` vars.
