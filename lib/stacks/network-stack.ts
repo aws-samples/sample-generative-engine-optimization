@@ -23,7 +23,6 @@ export class NetworkStack extends Stack {
     this.blogNetwork = new BlogNetwork(this, 'Network', {
       prefix: config.prefix,
       network: config.network,
-      retainData: config.retainData,
     });
 
     // Outputs for cross-stack reference / debugging.
@@ -53,6 +52,13 @@ export class NetworkStack extends Stack {
         appliesTo: [
           'AwsSolutions-EC23',
         ],
+      },
+      {
+        id: 'AwsSolutions-VPC7',
+        reason:
+          'The VPC does have a flow log — it is defined in the MonitoringStack ' +
+          '(the logging module) and delivered to S3 at logs/vpc_flow/. cdk-nag ' +
+          'only sees resources in this stack, so it cannot observe it here.',
       },
     ]);
   }

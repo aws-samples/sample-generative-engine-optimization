@@ -5,9 +5,9 @@ as a set of small, single-responsibility stacks so each component can be built
 out and deployed independently.
 
 > Status: **in progress**. `NetworkStack`, `DatabaseStack`, `StorageStack`,
-> `ComputeStack`, and `EdgeStack` are implemented; the remaining stacks are
-> documented placeholders that synthesize cleanly. Components are fleshed out
-> incrementally.
+> `ComputeStack`, `EdgeStack`, and `MonitoringStack` (logging module) are
+> implemented; only `AiStack` and `AnalyticsStack` remain as documented
+> placeholders. Components are fleshed out incrementally.
 
 ## Architecture
 
@@ -42,7 +42,7 @@ out and deployed independently.
 | `AiStack`         | Bedrock agent        | ⬜ todo | Generative AI features (agent, KB, action groups)|
 | `AnalyticsStack`  | Athena               | ⬜ todo | Glue catalog + Athena workgroup over S3 data     |
 | `EdgeStack`       | CloudFront           | ✅ done | SPA via S3 (OAC) + `/api/*` to API, logs to `logs/cf_logs/` |
-| `MonitoringStack` | CloudWatch           | ⬜ todo | Log groups, alarms, dashboard, SNS alerting      |
+| `MonitoringStack` | CloudWatch / S3 logs | ✅ done | Logging module: VPC Flow Logs → S3 `logs/vpc_flow/` (alarms/dashboards later) |
 
 Each stack composes a matching reusable construct from `lib/constructs`
 (see that folder's README for the mapping).
@@ -197,6 +197,36 @@ avoid a Compute↔Edge cycle.
 Documented cdk-nag suppressions cover the demo distribution's default
 certificate and absence of WAF/geo-restrictions (CFR1/CFR2/CFR4).
 
+### Logging / observability (implemented)
+
+`MonitoringStack` → `BlogObservability` construct is the platform's **logging
+module**. As a prototype it routes every log source that natively supports S3
+into the shared content bucket, and leaves CloudWatch-only sources (which
+cannot write to S3) on CloudWatch with consistent retention.
+
+Log inventory:
+
+| Source                | Destination                     | Where configured |
+| --------------------- | ------------------------------- | ---------------- |
+| VPC Flow Logs         | S3 `logs/vpc_flow/`             | MonitoringStack  |
+| CloudFront access     | S3 `logs/cf_logs/`              | EdgeStack        |
+| S3 server access      | S3 `logs/s3/` (self-logging)    | StorageStack     |
+| Athena query results  | S3 `logs/athena_logs/`          | AnalyticsStack (later) |
+| Lambda functions      | CloudWatch Logs (native only)   | ComputeStack     |
+| API Gateway access    | CloudWatch Logs (native only)   | ComputeStack     |
+
+> Why some logs stay on CloudWatch: **API Gateway access logs and Lambda logs
+> can only be delivered to CloudWatch Logs** — S3 is not a valid direct
+> destination for them. Archiving those to S3 would require a
+> CloudWatch → Firehose → S3 export pipeline, which is deferred beyond the
+> prototype.
+
+The flow log is created as a standalone `ec2.FlowLog` in the MonitoringStack
+(not via `vpc.addFlowLog`, which would attach it to the NetworkStack). The
+MonitoringStack imports the log bucket read-only by name to avoid a
+Monitoring↔Storage policy cycle. cdk-nag `AwsSolutions-VPC7` is suppressed on
+the NetworkStack because the flow log legitimately lives in another stack.
+
 ## Project layout
 
 ```
@@ -277,6 +307,7 @@ Account/region resolve from the CDK CLI environment or the
 | `priceClass`            | `all`  | all / 200 / 100    | CloudFront price class                          |
 | `defaultRootObject`     | `index.html` | string       | SPA root object                                 |
 | `apiPathPattern`        | `/api/*` | string           | Path routed to the API origin                   |
+| `flowLogTrafficType`    | `ALL`  | ALL / ACCEPT / REJECT | VPC Flow Log traffic captured to S3          |
 | `retainData`     | `false`        | truthy                 | Retain stateful resources on stack deletion      |
 
 Examples:
@@ -290,9 +321,9 @@ npm run deploy -- --all -c cidr=10.42.0.0/16 -c maxAzs=2 -c natGateways=2
 ```
 
 To change a **default** for everyone, edit `NETWORK_DEFAULTS`,
-`DATABASE_DEFAULTS`, `STORAGE_DEFAULTS`, `COMPUTE_DEFAULTS`, or `EDGE_DEFAULTS`
-in `lib/config/index.ts`. To change a value for a **single deploy**, pass it as
-context — no code change needed.
+`DATABASE_DEFAULTS`, `STORAGE_DEFAULTS`, `COMPUTE_DEFAULTS`, `EDGE_DEFAULTS`, or
+`MONITORING_DEFAULTS` in `lib/config/index.ts`. To change a value for a **single
+deploy**, pass it as context — no code change needed.
 
 ## Compliance
 
@@ -303,7 +334,7 @@ before deploying.
 ## Next steps
 
 Flesh out each remaining stack/construct pair in dependency order:
-~~Network~~ → ~~Storage~~ → ~~Database~~ → ~~Compute~~ → Ai → Analytics → ~~Edge~~ → Monitoring.
+~~Network~~ → ~~Storage~~ → ~~Database~~ → ~~Compute~~ → Ai → Analytics → ~~Edge~~ → ~~Monitoring~~.
 Add resource assertions to a dedicated unit test per stack (see
 `test/unit/network-stack.test.ts` as the template) and live checks to the
 integration suite as you go.

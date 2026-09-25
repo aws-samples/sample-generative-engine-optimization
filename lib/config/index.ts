@@ -67,6 +67,8 @@ export const STORAGE_PREFIXES = {
   athenaResults: 'logs/athena_logs/',
   /** S3 server access logs (the bucket logs to itself under this prefix). */
   s3AccessLogs: 'logs/s3/',
+  /** VPC Flow Logs delivered to S3. */
+  vpcFlowLogs: 'logs/vpc_flow/',
   /** Feedback-loop staging area: agent corrections awaiting review/promotion. */
   staging: 'staging/',
 } as const;
@@ -129,6 +131,16 @@ export interface EdgeConfig {
 }
 
 /**
+ * Monitoring / logging configuration for the {@link MonitoringStack} /
+ * BlogObservability construct. Every value has a default (see
+ * {@link MONITORING_DEFAULTS}) and can be overridden via CDK context.
+ */
+export interface MonitoringConfig {
+  /** VPC Flow Log traffic to capture: 'ALL' | 'ACCEPT' | 'REJECT'. */
+  readonly flowLogTrafficType: 'ALL' | 'ACCEPT' | 'REJECT';
+}
+
+/**
  * Central configuration for the blog platform. This is the single source of
  * truth; every stack derives names, sizing, and policies from it.
  */
@@ -156,6 +168,8 @@ export interface AppConfig {
   readonly compute: ComputeConfig;
   /** Edge settings (CloudFront distribution). */
   readonly edge: EdgeConfig;
+  /** Monitoring / logging settings. */
+  readonly monitoring: MonitoringConfig;
 }
 
 const APP_NAME = 'geo-demo';
@@ -222,6 +236,11 @@ export const EDGE_DEFAULTS: EdgeConfig = {
   priceClass: 'all',
   defaultRootObject: 'index.html',
   apiPathPattern: '/api/*',
+};
+
+/** Centralized monitoring/logging defaults. Override via context. */
+export const MONITORING_DEFAULTS: MonitoringConfig = {
+  flowLogTrafficType: 'ALL',
 };
 
 /** Whether stateful data is retained on stack deletion, by default. */
@@ -546,6 +565,25 @@ function resolveEdge(source?: ContextSource): EdgeConfig {
 }
 
 /**
+ * Resolve monitoring config: start from {@link MONITORING_DEFAULTS}, then apply
+ * any per-value overrides supplied via CDK context, validating each one.
+ *
+ * Supported context keys (all optional):
+ *   -c flowLogTrafficType=REJECT   (one of: ALL, ACCEPT, REJECT)
+ */
+function resolveMonitoring(source?: ContextSource): MonitoringConfig {
+  const raw = readContext(source, 'flowLogTrafficType');
+  const flowLogTrafficType =
+    raw === undefined || raw === '' ? MONITORING_DEFAULTS.flowLogTrafficType : String(raw).toUpperCase();
+  if (!['ALL', 'ACCEPT', 'REJECT'].includes(flowLogTrafficType)) {
+    throw new Error(
+      `Context "flowLogTrafficType" must be one of ALL|ACCEPT|REJECT, got "${flowLogTrafficType}".`,
+    );
+  }
+  return { flowLogTrafficType: flowLogTrafficType as MonitoringConfig['flowLogTrafficType'] };
+}
+
+/**
  * Build the active {@link AppConfig}.
  *
  * @param source  The CDK `App` (or anything exposing `node.tryGetContext`) so
@@ -574,5 +612,6 @@ export function getConfig(source?: App | ContextSource): AppConfig {
     storage: resolveStorage(source),
     compute: resolveCompute(source),
     edge: resolveEdge(source),
+    monitoring: resolveMonitoring(source),
   };
 }

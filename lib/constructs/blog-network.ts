@@ -1,6 +1,4 @@
-import { RemovalPolicy } from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
-import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import type { NetworkConfig } from '../config/index.js';
 
@@ -17,11 +15,6 @@ export interface BlogNetworkProps {
   readonly prefix: string;
   /** Networking settings resolved from the environment config. */
   readonly network: NetworkConfig;
-  /**
-   * When false, the VPC flow-log group is destroyed with the stack.
-   * Drives the flow-log group removal policy (retain in prod).
-   */
-  readonly retainData: boolean;
 }
 
 /**
@@ -57,7 +50,7 @@ export class BlogNetwork extends Construct {
   constructor(scope: Construct, id: string, props: BlogNetworkProps) {
     super(scope, id);
 
-    const { prefix, network, retainData } = props;
+    const { prefix, network } = props;
 
     // --- VPC + subnets -----------------------------------------------------
     this.vpc = new ec2.Vpc(this, 'Vpc', {
@@ -147,19 +140,9 @@ export class BlogNetwork extends Construct {
       });
     }
 
-    // --- VPC flow logs -----------------------------------------------------
-    const flowLogGroup = new logs.LogGroup(this, 'FlowLogGroup', {
-      logGroupName: `/${prefix}/vpc/flow-logs`,
-      retention: retainData
-        ? logs.RetentionDays.ONE_YEAR
-        : logs.RetentionDays.ONE_MONTH,
-      removalPolicy: retainData ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
-    });
-
-    this.vpc.addFlowLog('FlowLog', {
-      destination: ec2.FlowLogDestination.toCloudWatchLogs(flowLogGroup),
-      trafficType: ec2.FlowLogTrafficType.ALL,
-    });
+    // VPC Flow Logs are configured by the MonitoringStack (which owns the
+    // logging module) and delivered to the S3 bucket under logs/vpc_flow/, so
+    // they are intentionally not defined here.
   }
 
   /** Isolated subnet selection for the data tier (Aurora). */

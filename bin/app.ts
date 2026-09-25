@@ -78,11 +78,13 @@ const edge = new EdgeStack(app, `${prefix}-edge`, {
 edge.addDependency(storage);
 edge.addDependency(compute);
 
-const monitoring = new MonitoringStack(app, `${prefix}-monitoring`, baseProps);
-monitoring.addDependency(compute);
-monitoring.addDependency(edge);
-monitoring.addDependency(database);
-monitoring.addDependency(ai);
+const monitoring = new MonitoringStack(app, `${prefix}-monitoring`, {
+  ...baseProps,
+  vpc: network.vpc,
+  logBucketName: storage.bucket.bucketName,
+});
+monitoring.addDependency(network);
+monitoring.addDependency(storage);
 
 // --- Cross-cutting ---------------------------------------------------------
 // Apply tags to everything in the app.

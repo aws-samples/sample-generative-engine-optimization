@@ -64,12 +64,8 @@ describe('NetworkStack topology', () => {
     });
   });
 
-  it('enables VPC flow logs to CloudWatch', () => {
-    template.resourceCountIs('AWS::EC2::FlowLog', 1);
-    template.hasResourceProperties('AWS::EC2::FlowLog', {
-      ResourceType: 'VPC',
-      TrafficType: 'ALL',
-    });
+  it('does not define a VPC flow log (owned by the MonitoringStack -> S3)', () => {
+    template.resourceCountIs('AWS::EC2::FlowLog', 0);
   });
 
   it('exports the VPC id and the lambda security group id', () => {
