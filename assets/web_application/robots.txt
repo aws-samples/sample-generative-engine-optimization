@@ -1,0 +1,33 @@
+# robots.txt — Octank Hospitality
+# Allow all legitimate crawlers including AI engines.
+
+User-agent: *
+Allow: /
+
+# Explicitly allow AI crawlers (in case of future default-deny policies)
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+# Block admin and internal paths
+User-agent: *
+Disallow: /admin/
+Disallow: /internal/
+Disallow: /api/v1/auth/
+
+# Sitemaps
+Sitemap: https://www.octank-hotels.example.com/sitemap.xml

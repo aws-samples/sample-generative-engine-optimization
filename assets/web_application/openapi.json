@@ -1,0 +1,324 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Octank Hospitality API",
+    "description": "Machine-callable API for AI agents to search properties, check availability and rates, and create reservations across Octank Hospitality's 25 properties. Designed for use as a Bedrock Agent action group.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://qksfwi2ub8.execute-api.us-east-1.amazonaws.com/v1",
+      "description": "Production API (replace with your API Gateway invoke URL)"
+    }
+  ],
+  "paths": {
+    "/properties": {
+      "get": {
+        "operationId": "searchProperties",
+        "summary": "Search for hotel properties matching traveler preferences",
+        "description": "Returns a list of properties filtered by city, pet policy, and maximum nightly rate. Use this when a traveler asks for hotel recommendations in a specific city or with specific requirements like pet-friendly or a price ceiling.",
+        "parameters": [
+          {
+            "name": "city",
+            "in": "query",
+            "required": false,
+            "description": "City name to search in, e.g. 'denver', 'boulder', 'austin'.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pets",
+            "in": "query",
+            "required": false,
+            "description": "Set to true to return only pet-friendly properties.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "maxRate",
+            "in": "query",
+            "required": false,
+            "description": "Maximum nightly rate in USD.",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A list of matching properties",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PropertyList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/properties/{propertyId}/availability": {
+      "get": {
+        "operationId": "getAvailability",
+        "summary": "Get live room availability for a property",
+        "description": "Returns available room types and counts for a property. Use after the traveler selects a property and wants to know if rooms are open for their dates.",
+        "parameters": [
+          {
+            "name": "propertyId",
+            "in": "path",
+            "required": true,
+            "description": "The property identifier from searchProperties.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "checkIn",
+            "in": "query",
+            "required": false,
+            "description": "Check-in date, YYYY-MM-DD.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "checkOut",
+            "in": "query",
+            "required": false,
+            "description": "Check-out date, YYYY-MM-DD.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Availability by room type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Availability"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/properties/{propertyId}/rates": {
+      "get": {
+        "operationId": "getRates",
+        "summary": "Get nightly rates for a property by room type",
+        "description": "Returns standard and member nightly rates by room type and date. Use to compare pricing or answer questions about how much a stay will cost.",
+        "parameters": [
+          {
+            "name": "propertyId",
+            "in": "path",
+            "required": true,
+            "description": "The property identifier from searchProperties.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rates by room type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rates"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reservations": {
+      "post": {
+        "operationId": "createReservation",
+        "summary": "Create a hotel reservation",
+        "description": "Books a room at a property for the given dates and guest. Idempotent: calling twice with identical parameters returns the same confirmation. Use only after the traveler confirms they want to book.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReservationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Reservation confirmed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReservationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PropertyList": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "properties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Property"
+            }
+          }
+        }
+      },
+      "Property": {
+        "type": "object",
+        "properties": {
+          "property_id": {
+            "type": "integer"
+          },
+          "property_name": {
+            "type": "string"
+          },
+          "city_name": {
+            "type": "string"
+          },
+          "state_code": {
+            "type": "string"
+          },
+          "star_rating": {
+            "type": "number"
+          },
+          "review_count": {
+            "type": "integer"
+          },
+          "pets_allowed": {
+            "type": "boolean"
+          },
+          "brand_name": {
+            "type": "string"
+          },
+          "brand_tier": {
+            "type": "string"
+          }
+        }
+      },
+      "Availability": {
+        "type": "object",
+        "properties": {
+          "property_id": {
+            "type": "integer"
+          },
+          "availability": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "avail_date": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "room_type": {
+                  "type": "string"
+                },
+                "room_name": {
+                  "type": "string"
+                },
+                "rooms_available": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Rates": {
+        "type": "object",
+        "properties": {
+          "property_id": {
+            "type": "integer"
+          },
+          "rates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "rate_date": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "room_type": {
+                  "type": "string"
+                },
+                "rate_type": {
+                  "type": "string"
+                },
+                "nightly_rate_usd": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ReservationRequest": {
+        "type": "object",
+        "required": [
+          "property_id",
+          "room_type",
+          "check_in",
+          "check_out",
+          "guest_name"
+        ],
+        "properties": {
+          "property_id": {
+            "type": "integer"
+          },
+          "room_type": {
+            "type": "string"
+          },
+          "check_in": {
+            "type": "string",
+            "format": "date"
+          },
+          "check_out": {
+            "type": "string",
+            "format": "date"
+          },
+          "guest_name": {
+            "type": "string"
+          }
+        }
+      },
+      "ReservationResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "confirmation_number": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,51 @@
+{
+    "brand": "Octank Hospitality",
+    "domain": "octank-hotels.example.com",
+    "match_terms": [
+      "Octank Hospitality",
+      "Octank Hotels",
+      "Octank Suites",
+      "Octank Inn",
+      "Octank Resorts",
+      "Octank Residences",
+      "octank-hotels"
+    ],
+    "prompts": [
+      {
+        "id": "denver-family-pool",
+        "category": "family",
+        "prompt": "What are the best family-friendly hotels in Denver with a pool?"
+      },
+      {
+        "id": "denver-pet-friendly",
+        "category": "pets",
+        "prompt": "Can you recommend pet-friendly hotels near the Denver Convention Center?"
+      },
+      {
+        "id": "boulder-boutique",
+        "category": "boutique",
+        "prompt": "Where should I stay in Boulder for a weekend getaway? I want something boutique with mountain views."
+      },
+      {
+        "id": "denver-business",
+        "category": "business",
+        "prompt": "What's a good business hotel in the Denver Tech Center with coworking space?"
+      },
+      {
+        "id": "colorado-springs-kids",
+        "category": "family",
+        "prompt": "Best hotels near Garden of the Gods for families with kids?"
+      },
+      {
+        "id": "denver-breakfast-included",
+        "category": "value",
+        "prompt": "Hotels in downtown Denver with free breakfast included?"
+      },
+      {
+        "id": "boulder-extended-stay",
+        "category": "extended",
+        "prompt": "Extended stay options near CU Boulder with a kitchenette?"
+      }
+    ]
+  }
+  
