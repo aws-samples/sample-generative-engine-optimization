@@ -40,8 +40,11 @@ const database = new DatabaseStack(app, `${prefix}-database`, {
   ...baseProps,
   vpc: network.vpc,
   lambdaSecurityGroup: network.lambdaSecurityGroup,
+  // The schema-loader reads the SQL script the StorageStack uploads to code/db/.
+  contentBucketName: storage.bucket.bucketName,
 });
 database.addDependency(network);
+database.addDependency(storage);
 
 const ai = new AiStack(app, `${prefix}-ai`, baseProps);
 ai.addDependency(storage);

@@ -1,22 +1,25 @@
 import { App } from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { getConfig, type AppConfig } from '../../lib/config/index.js';
-import { NetworkStack, DatabaseStack } from '../../lib/stacks/index.js';
+import { NetworkStack, StorageStack, DatabaseStack } from '../../lib/stacks/index.js';
 import { TEST_ENV } from './helpers.js';
 
 /**
- * Build a DatabaseStack sourcing its VPC + SG from a real NetworkStack in the
- * same app, mirroring how bin/app.ts wires them (option A).
+ * Build a DatabaseStack sourcing its VPC + SG from a real NetworkStack and its
+ * content bucket name from a StorageStack in the same app, mirroring how
+ * bin/app.ts wires them (option A).
  */
 function synth(context: Record<string, unknown> = {}): Template {
   const app = new App({ context });
   const config: AppConfig = { ...getConfig(app), env: TEST_ENV };
   const network = new NetworkStack(app, 'test-network', { env: config.env, config });
+  const storage = new StorageStack(app, 'test-storage', { env: config.env, config });
   const database = new DatabaseStack(app, 'test-database', {
     env: config.env,
     config,
     vpc: network.vpc,
     lambdaSecurityGroup: network.lambdaSecurityGroup,
+    contentBucketName: storage.bucket.bucketName,
   });
   return Template.fromStack(database);
 }
@@ -28,7 +31,7 @@ describe('DatabaseStack (Aurora)', () => {
     template.resourceCountIs('AWS::RDS::DBCluster', 1);
     template.hasResourceProperties('AWS::RDS::DBCluster', {
       Engine: 'aurora-postgresql',
-      DatabaseName: 'blog',
+      DatabaseName: 'geo_db',
     });
   });
 
@@ -81,6 +84,40 @@ describe('DatabaseStack (Aurora)', () => {
   it('exports the cluster endpoint and secret ARN', () => {
     template.hasOutput('ClusterEndpoint', {});
     template.hasOutput('SecretArn', {});
+  });
+
+  it('provisions a schema-loader Lambda (python3.13) pointed at the SQL script', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      FunctionName: 'geo-demo-dev-db-loader',
+      Runtime: 'python3.13',
+      Handler: 'lambda_function.lambda_handler',
+      Environment: {
+        Variables: Match.objectLike({
+          SQL_KEY: 'code/db/geo_demo_full.sql',
+          DB_NAME: 'geo_db',
+        }),
+      },
+    });
+  });
+
+  it('grants the loader RDS Data API transaction + statement permissions', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith([
+              'rds-data:BeginTransaction',
+              'rds-data:CommitTransaction',
+              'rds-data:ExecuteStatement',
+            ]),
+          }),
+        ]),
+      },
+    });
+  });
+
+  it('creates the schema-loader custom resource', () => {
+    template.resourceCountIs('Custom::GeoDbSchemaLoader', 1);
   });
 });
 

@@ -192,7 +192,7 @@ export const NETWORK_DEFAULTS: NetworkConfig = {
  * proxy + rotation off (config-gated). Override any of these via CDK context.
  */
 export const DATABASE_DEFAULTS: DatabaseConfig = {
-  dbName: 'blog',
+  dbName: 'geo_db',
   engineVersion: '16.13',
   minAcu: 0.5,
   maxAcu: 2,

@@ -123,11 +123,12 @@ deploy time via CDK `BucketDeployment`:
 | `assets/code/`            | `code/`            |
 | `assets/db/`              | `code/db/`         |
 
-These are placeholder files (SPA stub, four Python Lambda handlers, OpenAPI
-specs, hotel booking `schema.sql` + `seed.sql`) — replace with the real content
-as it lands. Outputs `BucketName` and `BucketArn` are exported for consumers.
-The CDK-managed BucketDeployment Lambda carries documented cdk-nag suppressions
-(L1/IAM4/IAM5).
+`assets/web_application/` holds the real SPA content; `assets/code/` holds the
+four Python Lambda handlers + OpenAPI specs; `assets/db/geo_demo_full.sql` is the
+full hotel-booking schema + sample data (applied to Aurora by the DatabaseStack
+schema loader — see the Database layer below). Outputs `BucketName` and
+`BucketArn` are exported for consumers. The CDK-managed BucketDeployment Lambda
+carries documented cdk-nag suppressions (L1/IAM4/IAM5).
 
 ### Database layer (implemented)
 
@@ -151,6 +152,15 @@ The CDK-managed BucketDeployment Lambda carries documented cdk-nag suppressions
 Outputs `ClusterEndpoint`, `SecretArn`, and `ClusterArn` are exported for
 `ComputeStack`. The **RDS Data API is enabled** on the cluster so the Lambda
 tier can query it over HTTP.
+
+**Schema + data loading.** A custom resource (the `db-loader` Lambda) applies
+`assets/db/geo_demo_full.sql` to the cluster on deploy: it reads the script from
+S3 (`code/db/geo_demo_full.sql`, uploaded by the StorageStack), splits it into
+statements, and runs them via the RDS Data API inside a single transaction. The
+script is self-contained and re-runnable (DROP … CASCADE + CREATE + inserts +
+sequence resets), so it is idempotent; the loader re-runs automatically whenever
+the SQL content changes (tracked by a content hash). It runs after the cluster
+is ready and needs no VPC attachment (Data API + S3 are public AWS endpoints).
 
 The cross-stack VPC/SG references use CDK's "strong" reference strength
 (`@aws-cdk/core:defaultCrossStackReferences` in `cdk.json`), so a producing
@@ -307,7 +317,7 @@ Account/region resolve from the CDK CLI environment or the
 | `natGateways`    | `1`            | integer 0..maxAzs      | NAT gateways (1 = single regional; bump for HA) |
 | `subnetCidrMask` | `24`           | integer 16..28         | Netmask for each subnet CIDR                     |
 | `databasePort`   | `5432`         | integer 1..65535       | Database port (PostgreSQL)                       |
-| `dbName`         | `blog`         | string                 | Initial database name                            |
+| `dbName`         | `geo_db`       | string                 | Initial database name                            |
 | `engineVersion`  | `16.13`        | `major.minor`          | Aurora PostgreSQL version (pinned, not "latest") |
 | `minAcu`         | `0.5`          | number 0.5..256        | Serverless v2 min capacity (ACU)                 |
 | `maxAcu`         | `2`            | number >= minAcu       | Serverless v2 max capacity (ACU)                 |

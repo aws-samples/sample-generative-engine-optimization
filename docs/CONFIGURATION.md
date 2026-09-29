@@ -50,7 +50,7 @@ Account/region resolve from the CDK CLI environment, or explicitly from the
 
 | Key              | Default   | Validation        | Meaning                                          |
 | ---------------- | --------- | ----------------- | ------------------------------------------------ |
-| `dbName`         | `blog`    | string            | Initial database name                            |
+| `dbName`         | `geo_db`  | string            | Initial database name                            |
 | `engineVersion`  | `16.13`   | `major.minor`     | Aurora PostgreSQL version (pinned, never "latest") |
 | `minAcu`         | `0.5`     | number 0.5..256   | Serverless v2 min capacity (ACU)                 |
 | `maxAcu`         | `2`       | number ≥ minAcu   | Serverless v2 max capacity (ACU)                 |
@@ -58,12 +58,12 @@ Account/region resolve from the CDK CLI environment, or explicitly from the
 | `enableProxy`    | `false`   | true/false        | Provision an RDS Proxy (connection pooling)      |
 | `enableRotation` | `false`   | true/false        | Enable Secrets Manager credential rotation       |
 
-> **Reconciliation note.** The `dbName` default is `blog`, but the database in
-> the demo account (`501683248676`) is `geo_db`. When deploying against an
-> existing account, override it: `-c dbName=geo_db`. CDK-owned resources use the
-> `geo-demo-dev-*` naming; the pre-existing hand-built resources
-> (`geo-demo-content-a2z4`, `geo-demo-db`) are separate. Reconcile names before
-> deploying into an account that already has them.
+> **Reconciliation note.** The `dbName` default is `geo_db`, matching the
+> `geo_demo_full.sql` script and the database in the demo account
+> (`501683248676`). Note that CDK-owned resources use the `geo-demo-dev-*`
+> naming, whereas the pre-existing hand-built resources (`geo-demo-content-a2z4`,
+> `geo-demo-db`) are separate — reconcile names before deploying into an account
+> that already has them.
 
 ### Storage (`STORAGE_DEFAULTS`)
 

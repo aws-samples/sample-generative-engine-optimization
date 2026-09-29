@@ -1,6 +1,7 @@
 import { CfnOutput, Stack } from 'aws-cdk-lib';
 import type * as ec2 from 'aws-cdk-lib/aws-ec2';
 import type * as rds from 'aws-cdk-lib/aws-rds';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import type * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { NagSuppressions } from 'cdk-nag';
 import type { Construct } from 'constructs';
@@ -16,6 +17,12 @@ export interface DatabaseStackProps extends BaseStackProps {
   readonly vpc: ec2.IVpc;
   /** The Lambda tier's security group from the NetworkStack (source of DB ingress). */
   readonly lambdaSecurityGroup: ec2.ISecurityGroup;
+  /**
+   * Name of the content bucket (from the StorageStack) holding the SQL script.
+   * Imported read-only so the schema-loader's S3 read grant does not write a
+   * back-reference policy into the StorageStack.
+   */
+  readonly contentBucketName: string;
 }
 
 /**
@@ -31,7 +38,9 @@ export class DatabaseStack extends Stack {
   constructor(scope: Construct, id: string, props: DatabaseStackProps) {
     super(scope, id, props);
 
-    const { config, vpc, lambdaSecurityGroup } = props;
+    const { config, vpc, lambdaSecurityGroup, contentBucketName } = props;
+
+    const contentBucket = s3.Bucket.fromBucketName(this, 'ContentBucket', contentBucketName);
 
     this.blogDatabase = new BlogDatabase(this, 'Database', {
       prefix: config.prefix,
@@ -39,6 +48,7 @@ export class DatabaseStack extends Stack {
       databasePort: config.network.databasePort,
       vpc,
       lambdaSecurityGroup,
+      contentBucket,
       retainData: config.retainData,
     });
 
@@ -89,6 +99,41 @@ export class DatabaseStack extends Stack {
         },
       ]);
     }
+
+    // The schema-loader (db-loader Lambda + its CDK-managed custom-resource
+    // Provider) is a deploy-time helper. Its findings are inherent to the
+    // pattern: pinned runtime, managed exec role, and the scoped/CDK-managed
+    // wildcard permissions of the Provider framework and the S3 read grant.
+    NagSuppressions.addStackSuppressions(
+      this,
+      [
+        {
+          id: 'AwsSolutions-L1',
+          reason:
+            'The schema-loader runtime is pinned to python3.13 (current latest) ' +
+            'to match the application Lambdas; the CDK Provider Lambda runtime is ' +
+            'controlled by CDK.',
+        },
+        {
+          id: 'AwsSolutions-IAM4',
+          reason:
+            'The db-loader and CDK Provider Lambdas use the AWS-managed ' +
+            'AWSLambdaBasicExecutionRole for CloudWatch Logs.',
+          appliesTo: [
+            'Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
+          ],
+        },
+        {
+          id: 'AwsSolutions-IAM5',
+          reason:
+            'Scoped/inherent wildcards for the schema loader: the CDK Provider ' +
+            'framework grants lambda:InvokeFunction on its own onEvent handler, ' +
+            'and the S3 read grant expands to GetObject*/GetBucket*/List* scoped ' +
+            'to the code/db/* prefix of the content bucket.',
+        },
+      ],
+      true,
+    );
   }
 
   /** The Aurora cluster (for ComputeStack to grant access + read endpoints). */

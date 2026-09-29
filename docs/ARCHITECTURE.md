@@ -123,6 +123,13 @@ The repo's `assets/` tree is uploaded at deploy time via `BucketDeployment`:
 - Config-gated extras (off by default): **RDS Proxy** and **secret rotation**.
 - Teardown driven by `retainData`: dev destroys cleanly; retained mode uses a
   `SNAPSHOT` removal policy with deletion protection.
+- **Schema + data loader**: a custom resource (the `db-loader` Lambda) applies
+  `assets/db/geo_demo_full.sql` to the cluster on deploy — it reads the script
+  from S3 (`code/db/geo_demo_full.sql`), splits it into statements
+  (quote-aware), and executes them via the RDS Data API inside one transaction.
+  The script is re-runnable (DROP … CASCADE), so it is idempotent, and the
+  loader re-runs when the SQL content hash changes. It depends on the cluster
+  and is not VPC-attached (Data API + S3 are public AWS endpoints).
 
 ### ComputeStack
 

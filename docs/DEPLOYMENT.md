@@ -73,6 +73,15 @@ Recommended first-deploy order (matches dependencies):
 network → storage → database → compute → edge → monitoring
 ```
 
+> **Schema + data load.** Deploying `geo-demo-dev-database` runs the `db-loader`
+> custom resource, which applies `assets/db/geo_demo_full.sql` (uploaded to
+> `code/db/`) to the new cluster via the RDS Data API. It runs automatically
+> after the cluster is ready and re-runs whenever the SQL content changes.
+> Because it applies ~8k statements sequentially over the Data API, the database
+> stack can take a few minutes on first deploy. The script is re-runnable, so a
+> failed/interrupted load can be retried by re-deploying. `storage` must be
+> deployed before `database` (the loader reads the SQL from the bucket).
+
 ### Two-phase step: CloudFront distribution id for the promoter
 
 The `promoter` Lambda invalidates the CloudFront distribution, but the
@@ -165,6 +174,7 @@ If a destroy fails because a bucket is non-empty, confirm `retainData` is
 | `DependencyCycle` at synth | A cross-stack reference points both ways. See the "Cross-stack references" section in [ARCHITECTURE.md](ARCHITECTURE.md); pass a name/id instead of a live construct. |
 | Promoter isn't invalidating CloudFront | `distributionId` not supplied. Re-deploy Compute with `-c distributionId=...` (two-phase step above). |
 | `api-handler` can't reach Aurora | Confirm the `rds-data` VPC interface endpoint exists (NetworkStack) and the cluster has the Data API enabled (DatabaseStack). |
+| Schema loader (`db-loader`) fails | Check its CloudWatch logs (`/aws/lambda/geo-demo-dev-db-loader`). The SQL is re-runnable; re-deploy `geo-demo-dev-database` to retry. Confirm `storage` deployed first (the SQL must exist at `code/db/geo_demo_full.sql`). |
 | Bucket delete blocked on destroy | `retainData=true` retains it by design, or objects remain; set `retainData=false`. |
 | `git push` fails `Permission denied (publickey)` | The GitLab SSH certificate expired; refresh it and retry. |
 
