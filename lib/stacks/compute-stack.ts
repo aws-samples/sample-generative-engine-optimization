@@ -71,11 +71,14 @@ export class ComputeStack extends Stack {
         id: 'AwsSolutions-IAM4',
         reason:
           'Lambda functions use the AWS-managed AWSLambdaBasicExecutionRole and ' +
-          'AWSLambdaVPCAccessExecutionRole for logging and VPC ENI management, ' +
-          'matching the discovered least-privilege baseline.',
+          'AWSLambdaVPCAccessExecutionRole for logging and VPC ENI management; the ' +
+          'API Gateway account role uses the AWS-managed ' +
+          'AmazonAPIGatewayPushToCloudWatchLogs policy required to enable stage ' +
+          'logging. These match the standard least-privilege baseline.',
         appliesTo: [
           'Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
           'Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole',
+          'Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs',
         ],
       },
       {

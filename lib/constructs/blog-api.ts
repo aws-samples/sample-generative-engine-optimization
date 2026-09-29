@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { Duration } from 'aws-cdk-lib';
+import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -195,12 +195,19 @@ export class BlogApi extends Construct {
     const accessLogGroup = new logs.LogGroup(this, 'ApiAccessLogs', {
       logGroupName: `/${prefix}/apigw/access`,
       retention: logs.RetentionDays.ONE_MONTH,
+      // Destroy with the stack so a failed/rolled-back deploy doesn't orphan the
+      // named log group and block a subsequent create.
+      removalPolicy: RemovalPolicy.DESTROY,
     });
 
     this.api = new apigateway.RestApi(this, 'RestApi', {
       restApiName: `${prefix}-hospitality-api`,
       description: 'Octank Hospitality API — public entry point for GEO agents.',
       endpointTypes: [apigateway.EndpointType.REGIONAL],
+      // Create + register the account-level CloudWatch Logs role that API
+      // Gateway requires before any stage can enable logging. Without this the
+      // stage fails: "CloudWatch Logs role ARN must be set in account settings".
+      cloudWatchRole: true,
       deployOptions: {
         stageName: compute.apiStageName,
         throttlingRateLimit: compute.apiThrottleRateLimit,

@@ -5,7 +5,6 @@ import { CustomResource, Duration, RemovalPolicy } from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as logs from 'aws-cdk-lib/aws-logs';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import type * as s3 from 'aws-cdk-lib/aws-s3';
 import type * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
@@ -216,7 +215,6 @@ export class BlogDatabase extends Construct {
 
     const provider = new cr.Provider(this, 'SchemaLoaderProvider', {
       onEventHandler: loaderFn,
-      logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
     // Hash the SQL so the custom resource re-runs when the script changes.

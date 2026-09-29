@@ -43,10 +43,12 @@ const database = new DatabaseStack(app, `${prefix}-database`, {
   // The schema-loader reads the SQL script the StorageStack uploads to code/db/.
   contentBucketName: storage.bucket.bucketName,
 });
-database.addDependency(network);
-database.addDependency(storage);
+// Note: dependencies on network + storage are implicit — passing vpc/SG and the
+// bucket name above already makes CDK order these stacks correctly.
 
 const ai = new AiStack(app, `${prefix}-ai`, baseProps);
+// AiStack is a placeholder with no output reference yet, so express the
+// dependency explicitly to keep deploy ordering sensible.
 ai.addDependency(storage);
 
 const compute = new ComputeStack(app, `${prefix}-compute`, {
@@ -63,11 +65,11 @@ const compute = new ComputeStack(app, `${prefix}-compute`, {
   //   -c distributionId=E2HKAT79V522DO
   distributionId: app.node.tryGetContext('distributionId') as string | undefined,
 });
-compute.addDependency(network);
-compute.addDependency(database);
-compute.addDependency(storage);
+// Dependencies on network + database + storage are implicit via the references
+// passed above (vpc, clusterArn, secret, bucket).
 
 const analytics = new AnalyticsStack(app, `${prefix}-analytics`, baseProps);
+// Placeholder with no output reference yet — explicit dependency.
 analytics.addDependency(storage);
 
 const edge = new EdgeStack(app, `${prefix}-edge`, {
@@ -78,16 +80,14 @@ const edge = new EdgeStack(app, `${prefix}-edge`, {
   apiOriginDomain: compute.apiOriginDomain,
   apiStageName: compute.apiStageName,
 });
-edge.addDependency(storage);
-edge.addDependency(compute);
+// Dependencies on storage (bucket name) + compute (API origin) are implicit.
 
 const monitoring = new MonitoringStack(app, `${prefix}-monitoring`, {
   ...baseProps,
   vpc: network.vpc,
   logBucketName: storage.bucket.bucketName,
 });
-monitoring.addDependency(network);
-monitoring.addDependency(storage);
+// Dependencies on network (vpc) + storage (bucket name) are implicit.
 
 // --- Cross-cutting ---------------------------------------------------------
 // Apply tags to everything in the app.
