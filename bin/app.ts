@@ -49,7 +49,7 @@ const database = new DatabaseStack(app, `${prefix}-database`, {
 const ai = new AiStack(app, `${prefix}-ai`, baseProps);
 // AiStack is a placeholder with no output reference yet, so express the
 // dependency explicitly to keep deploy ordering sensible.
-ai.addDependency(storage);
+ai.addStackDependency(storage);
 
 const compute = new ComputeStack(app, `${prefix}-compute`, {
   ...baseProps,
@@ -70,7 +70,7 @@ const compute = new ComputeStack(app, `${prefix}-compute`, {
 
 const analytics = new AnalyticsStack(app, `${prefix}-analytics`, baseProps);
 // Placeholder with no output reference yet — explicit dependency.
-analytics.addDependency(storage);
+analytics.addStackDependency(storage);
 
 const edge = new EdgeStack(app, `${prefix}-edge`, {
   ...baseProps,
