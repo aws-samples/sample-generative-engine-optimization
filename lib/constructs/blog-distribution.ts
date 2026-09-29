@@ -58,6 +58,26 @@ export class BlogDistribution extends Construct {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
     });
 
+    // The API Gateway routes have no `/api` prefix, but the CloudFront behavior
+    // matches `/api/*`. Strip the leading `/api` prefix at the edge so
+    // `/api/properties` reaches the origin as `/properties`.
+    const apiPrefix = edge.apiPathPattern.replace(/\/\*$/, ''); // '/api/*' -> '/api'
+    const rewriteFn = new cloudfront.Function(this, 'ApiPathRewrite', {
+      comment: `Strip ${apiPrefix} prefix before the API origin`,
+      code: cloudfront.FunctionCode.fromInline(`
+function handler(event) {
+  var request = event.request;
+  var prefix = '${apiPrefix}';
+  if (request.uri === prefix) {
+    request.uri = '/';
+  } else if (request.uri.startsWith(prefix + '/')) {
+    request.uri = request.uri.substring(prefix.length);
+  }
+  return request;
+}
+`),
+    });
+
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment: `${prefix} — Octank Hospitality (SPA + API)`,
       defaultRootObject: edge.defaultRootObject,
@@ -83,6 +103,12 @@ export class BlogDistribution extends Construct {
           allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
           originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          functionAssociations: [
+            {
+              function: rewriteFn,
+              eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
+            },
+          ],
         },
       },
     });

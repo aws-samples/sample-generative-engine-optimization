@@ -79,6 +79,13 @@ describe('EdgeStack (CloudFront)', () => {
     template.hasOutput('DistributionId', {});
     template.hasOutput('DistributionDomainName', {});
   });
+
+  it('attaches a CloudFront Function to strip the /api prefix', () => {
+    template.resourceCountIs('AWS::CloudFront::Function', 1);
+    const fns = template.findResources('AWS::CloudFront::Function');
+    const code = Object.values(fns)[0].Properties.FunctionCode as string;
+    expect(code).toContain("var prefix = '/api'");
+  });
 });
 
 describe('EdgeStack honors context overrides', () => {
