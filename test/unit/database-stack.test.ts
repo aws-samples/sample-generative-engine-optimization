@@ -119,6 +119,13 @@ describe('DatabaseStack (Aurora)', () => {
   it('creates the schema-loader custom resource', () => {
     template.resourceCountIs('Custom::GeoDbSchemaLoader', 1);
   });
+
+  it('gives the db-loader an explicit DESTROY log group (clean teardown)', () => {
+    template.hasResource('AWS::Logs::LogGroup', {
+      DeletionPolicy: 'Delete',
+      Properties: Match.objectLike({ LogGroupName: '/aws/lambda/geo-demo-dev-db-loader' }),
+    });
+  });
 });
 
 describe('DatabaseStack honors context overrides', () => {

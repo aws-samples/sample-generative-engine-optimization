@@ -98,6 +98,7 @@ export class BlogApi extends Construct {
     this.apiHandler = new lambda.Function(this, 'ApiHandler', {
       ...commonProps,
       functionName: `${prefix}-api-handler`,
+      logGroup: this.logGroupFor('ApiHandlerLogGroup', `${prefix}-api-handler`),
       code: lambda.Code.fromAsset(codeDir('api-handler')),
       timeout: Duration.seconds(compute.apiTimeoutSeconds),
       environment: {
@@ -125,6 +126,7 @@ export class BlogApi extends Construct {
     this.citationTracker = new lambda.Function(this, 'CitationTracker', {
       ...commonProps,
       functionName: `${prefix}-citation-tracker`,
+      logGroup: this.logGroupFor('CitationTrackerLogGroup', `${prefix}-citation-tracker`),
       code: lambda.Code.fromAsset(codeDir('citation-tracker')),
       timeout: Duration.seconds(compute.citationTimeoutSeconds),
       environment: {
@@ -152,6 +154,7 @@ export class BlogApi extends Construct {
     this.patchApplier = new lambda.Function(this, 'PatchApplier', {
       ...commonProps,
       functionName: `${prefix}-patch-applier`,
+      logGroup: this.logGroupFor('PatchApplierLogGroup', `${prefix}-patch-applier`),
       code: lambda.Code.fromAsset(codeDir('patch-applier')),
       timeout: Duration.seconds(compute.workerTimeoutSeconds),
       environment: {
@@ -167,6 +170,7 @@ export class BlogApi extends Construct {
     this.promoter = new lambda.Function(this, 'Promoter', {
       ...commonProps,
       functionName: `${prefix}-promoter`,
+      logGroup: this.logGroupFor('PromoterLogGroup', `${prefix}-promoter`),
       code: lambda.Code.fromAsset(codeDir('promoter')),
       timeout: Duration.seconds(compute.workerTimeoutSeconds),
       environment: {
@@ -251,5 +255,19 @@ export class BlogApi extends Construct {
         conditions: { StringEquals: { 'cloudwatch:namespace': namespace } },
       }),
     );
+  }
+
+  /**
+   * Create the CloudWatch log group for a Lambda explicitly, with a DESTROY
+   * removal policy, so `cdk destroy` removes it and a subsequent `cdk deploy`
+   * does not fail with "log group already exists". Without this, Lambda
+   * auto-creates an unmanaged `/aws/lambda/<fn>` group that survives teardown.
+   */
+  private logGroupFor(id: string, functionName: string): logs.LogGroup {
+    return new logs.LogGroup(this, id, {
+      logGroupName: `/aws/lambda/${functionName}`,
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
   }
 }

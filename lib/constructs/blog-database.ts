@@ -5,6 +5,7 @@ import { CustomResource, Duration, RemovalPolicy } from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import type * as s3 from 'aws-cdk-lib/aws-s3';
 import type * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
@@ -182,6 +183,13 @@ export class BlogDatabase extends Construct {
       functionName: `${prefix}-db-loader`,
       runtime: lambda.Runtime.PYTHON_3_13,
       handler: 'lambda_function.lambda_handler',
+      // Explicit DESTROY log group so cdk destroy removes it and a reinstall
+      // doesn't fail with "log group already exists".
+      logGroup: new logs.LogGroup(this, 'SchemaLoaderLogGroup', {
+        logGroupName: `/aws/lambda/${prefix}-db-loader`,
+        retention: logs.RetentionDays.ONE_MONTH,
+        removalPolicy: RemovalPolicy.DESTROY,
+      }),
       code: lambda.Code.fromAsset(path.resolve(process.cwd(), 'assets', 'code', 'db-loader')),
       // The full script is ~8k statements applied sequentially over the Data
       // API, so allow generous time and memory.

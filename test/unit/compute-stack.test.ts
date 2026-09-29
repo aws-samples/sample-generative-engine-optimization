@@ -42,6 +42,18 @@ describe('ComputeStack (Lambdas + REST API)', () => {
     expect(withVpc).toHaveLength(4);
   });
 
+  it('creates an explicit DESTROY log group per function (clean teardown)', () => {
+    // 4 lambda log groups + 1 API Gateway access log group = 5, all DESTROY.
+    const groups = template.findResources('AWS::Logs::LogGroup');
+    expect(Object.keys(groups).length).toBeGreaterThanOrEqual(5);
+    for (const g of Object.values(groups)) {
+      expect(g.DeletionPolicy).toBe('Delete');
+    }
+    template.hasResourceProperties('AWS::Logs::LogGroup', {
+      LogGroupName: '/aws/lambda/geo-demo-dev-api-handler',
+    });
+  });
+
   it('sets the discovered per-function timeouts', () => {
     template.hasResourceProperties('AWS::Lambda::Function', {
       FunctionName: 'geo-demo-dev-api-handler',
