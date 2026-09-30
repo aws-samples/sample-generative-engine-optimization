@@ -15,10 +15,9 @@ import type { BaseStackProps } from './stack-props.js';
  *
  * Depends on: StorageStack (data-lake + query-results buckets).
  */
-export interface AnalyticsStackProps extends BaseStackProps {
-  // readonly dataLakeBucket: s3.IBucket;
-  // readonly queryResultsBucket: s3.IBucket;
-}
+// Placeholder: no extra props yet. A type alias (not an empty interface) keeps
+// the named type for future extension without tripping no-empty-object-type.
+export type AnalyticsStackProps = BaseStackProps;
 
 export class AnalyticsStack extends Stack {
   // public readonly workgroupName: string;

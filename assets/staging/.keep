@@ -1,0 +1,6 @@
+# This marker ensures the staging/ prefix exists in the content bucket.
+#
+# The GEO feedback-loop Lambdas (patch-applier, promoter) read/write objects
+# under staging/. S3 has no real folders — a prefix only appears once an object
+# exists under it — so this placeholder guarantees the base prefix is present
+# on deploy. Safe to leave in place; it is never served.
