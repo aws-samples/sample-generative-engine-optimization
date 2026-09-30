@@ -147,17 +147,122 @@ See [CONFIGURATION.md](CONFIGURATION.md) for the complete key reference.
 
 ## Verifying a deployment
 
-- **API**: use the `geo-demo-dev-compute` output `ApiEndpoint`:
-  ```bash
-  curl "$API_ENDPOINT/properties"
-  ```
-- **Site**: open the `geo-demo-dev-edge` output `DistributionDomainName` in a
-  browser (serves `web_application/index.html`).
-- **Integration tests** (against the live deployment; self-skip without env):
-  ```bash
-  $env:BLOG_URL = "https://<distribution-domain>"   # PowerShell
-  npm run test:integ
-  ```
+Work through these steps in order. Commands are PowerShell; they use the
+`GEO_BLOG` profile and `ca-central-1` region (adjust if you deployed elsewhere).
+
+> On Windows PowerShell, `curl` is an alias for `Invoke-WebRequest` (noisy
+> output). Use **`curl.exe`** below for the real curl with clean output.
+
+### Step 1 — Confirm all stacks are healthy
+
+```powershell
+aws cloudformation describe-stacks --profile GEO_BLOG --region ca-central-1 `
+  --query "Stacks[?starts_with(StackName,'geo-demo-dev')].[StackName,StackStatus]" `
+  --output table
+```
+**Expect:** every stack is `CREATE_COMPLETE` or `UPDATE_COMPLETE` (the `ai` and
+`analytics` placeholders are also `CREATE_COMPLETE`).
+
+### Step 2 — Capture the endpoints from stack outputs
+
+```powershell
+$api = aws cloudformation describe-stacks --stack-name geo-demo-dev-compute `
+  --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" `
+  --output text --profile GEO_BLOG --region ca-central-1
+
+$cf = "https://" + (aws cloudformation describe-stacks --stack-name geo-demo-dev-edge `
+  --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue" `
+  --output text --profile GEO_BLOG --region ca-central-1)
+
+$sm = aws cloudformation describe-stacks --stack-name geo-demo-dev-workflow `
+  --query "Stacks[0].Outputs[?OutputKey=='StateMachineArn'].OutputValue" `
+  --output text --profile GEO_BLOG --region ca-central-1
+
+"API : $api"; "CF  : $cf"; "SM  : $sm"
+```
+
+### Step 3 — Verify the website (CloudFront → S3 via OAC)
+
+Open `$cf` in a browser, or:
+```powershell
+curl.exe -o NUL -s -w "home:  %{http_code}`n" "$cf/"
+curl.exe -o NUL -s -w "page:  %{http_code}`n" "$cf/properties/octank-hotels-denver-downtown.html"
+curl.exe -o NUL -s -w "llms:  %{http_code}`n" "$cf/llms.txt"
+```
+**Expect:** `200` for each. The browser shows the SPA / a property page.
+
+### Step 4 — Verify the API (API Gateway → Lambda → Aurora Data API)
+
+```powershell
+# Direct against API Gateway
+curl.exe -s "$api/properties" | ConvertFrom-Json | ConvertTo-Json -Depth 4
+
+# Through CloudFront (/api/* behavior strips the prefix)
+curl.exe -s "$cf/api/properties"
+
+# Data-path routes that query Aurora
+curl.exe -s "$cf/api/properties/13/availability"
+curl.exe -s "$cf/api/properties/13/rates"
+```
+**Expect:** JSON with real hotel data — e.g. `/properties` returns
+`{"count": 25, "properties": [ ... ]}`, and availability/rates return rows.
+This proves the whole path: CloudFront → API Gateway → VPC Lambda → RDS Data API
+→ Aurora.
+
+> **Known quirk (not a deploy failure):** `GET /api/properties/13` (single
+> property by numeric id) currently returns `404` — an application-code detail
+> in `api-handler` (it keys on a slug, not the numeric id). The list,
+> availability, and rates routes confirm the data path works.
+
+### Step 5 — Verify the feedback-loop Step Function
+
+```powershell
+# Start an execution
+$exec = aws stepfunctions start-execution --state-machine-arn $sm --input "{}" `
+  --query "executionArn" --output text --profile GEO_BLOG --region ca-central-1
+
+# Poll status (repeat until SUCCEEDED; citation-tracker calls Bedrock, ~1-3 min)
+aws stepfunctions describe-execution --execution-arn $exec `
+  --query "status" --output text --profile GEO_BLOG --region ca-central-1
+```
+**Expect:** status goes `RUNNING` → `SUCCEEDED`. Or watch it visually in the
+**Step Functions console** (ca-central-1) → `geo-demo-dev-feedback-loop` →
+Executions → the graph lights up MeasureLive → HasGap → … . The loop is
+stage-only: a validated candidate (if any) is left under `staging/`.
+
+### Step 6 — Spot-check data & logs (optional)
+
+```powershell
+# Bucket layout — should list web_application/ code/ logs/ staging/
+$bucket = aws cloudformation describe-stacks --stack-name geo-demo-dev-storage `
+  --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" `
+  --output text --profile GEO_BLOG --region ca-central-1
+aws s3 ls "s3://$bucket/" --profile GEO_BLOG --region ca-central-1
+
+# Recent API-handler logs
+aws logs tail /aws/lambda/geo-demo-dev-api-handler --since 15m `
+  --profile GEO_BLOG --region ca-central-1
+```
+
+### Step 7 — Run the automated integration suite (optional)
+
+The repo ships integration tests that self-skip unless pointed at a deployment:
+```powershell
+$env:BLOG_URL = $cf
+npm run test:integ
+```
+
+### One-shot smoke check
+
+To do steps 3–4 in one go:
+```powershell
+$cf = "https://" + (aws cloudformation describe-stacks --stack-name geo-demo-dev-edge --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue" --output text --profile GEO_BLOG --region ca-central-1)
+foreach ($p in "/","/llms.txt","/api/properties","/api/properties/13/availability") {
+  $code = curl.exe -o NUL -s -w "%{http_code}" "$cf$p"
+  "{0,-40} {1}" -f $p, $code
+}
+```
+**Expect:** `200` for every path.
 
 ## Logging: where to find what
 
