@@ -20,9 +20,9 @@ import type { BaseStackProps } from './stack-props.js';
  * Note: L2 support for Bedrock is limited — expect L1 (Cfn*) constructs and/or
  * the aws-cdk generative-ai constructs library here.
  */
-export interface AiStackProps extends BaseStackProps {
-  // readonly knowledgeBaseBucket: s3.IBucket;
-}
+// Placeholder: no extra props yet. A type alias (not an empty interface) keeps
+// the named type for future extension without tripping no-empty-object-type.
+export type AiStackProps = BaseStackProps;
 
 export class AiStack extends Stack {
   // public readonly agentId: string;

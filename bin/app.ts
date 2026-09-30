@@ -73,7 +73,10 @@ const analytics = new AnalyticsStack(app, `${prefix}-analytics`, baseProps);
 // Placeholder with no output reference yet — explicit dependency.
 analytics.addStackDependency(storage);
 
-const edge = new EdgeStack(app, `${prefix}-edge`, {
+// These stacks are instantiated for their side effect (registration with the
+// app); their dependencies are implicit via the references passed in, so no
+// local variable is kept.
+new EdgeStack(app, `${prefix}-edge`, {
   ...baseProps,
   // Pass the bucket NAME (imported read-only in EdgeStack) rather than the live
   // construct, to avoid a Storage<->Edge dependency cycle from the OAC policy.
@@ -81,18 +84,15 @@ const edge = new EdgeStack(app, `${prefix}-edge`, {
   apiOriginDomain: compute.apiOriginDomain,
   apiStageName: compute.apiStageName,
 });
-// Dependencies on storage (bucket name) + compute (API origin) are implicit.
 
-const workflow = new WorkflowStack(app, `${prefix}-workflow`, {
+new WorkflowStack(app, `${prefix}-workflow`, {
   ...baseProps,
   citationTracker: compute.citationTracker,
   patchApplier: compute.patchApplier,
   promoter: compute.promoter,
 });
-// Dependency on compute is implicit (the three functions are passed in).
-void workflow;
 
-const monitoring = new MonitoringStack(app, `${prefix}-monitoring`, {
+new MonitoringStack(app, `${prefix}-monitoring`, {
   ...baseProps,
   vpc: network.vpc,
   logBucketName: storage.bucket.bucketName,

@@ -209,10 +209,15 @@ curl.exe -s "$cf/api/properties/13/rates"
 This proves the whole path: CloudFront → API Gateway → VPC Lambda → RDS Data API
 → Aurora.
 
-> **Known quirk (not a deploy failure):** `GET /api/properties/13` (single
-> property by numeric id) currently returns `404` — an application-code detail
-> in `api-handler` (it keys on a slug, not the numeric id). The list,
-> availability, and rates routes confirm the data path works.
+> **Known behavior (by design, not a deploy failure):** `GET /api/properties/13`
+> (single-property detail) returns `404`. The `api-handler` intentionally
+> implements only four routes — `GET /properties`, `GET /properties/{id}/
+> availability`, `GET /properties/{id}/rates`, `POST /reservations` — and
+> returns a helpful `404` with the valid-route list for anything else. This
+> matches the real deployed handler in us-east-1. (API Gateway advertises a
+> `GET /properties/{propertyId}` route that the handler does not implement, so
+> it falls through to that 404 — left as-is to stay faithful to the source.)
+> The list, availability, and rates routes confirm the Aurora data path works.
 
 ### Step 5 — Verify the feedback-loop Step Function
 
