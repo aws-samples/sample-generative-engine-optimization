@@ -7,3 +7,4 @@ export * from './ai-stack.js';
 export * from './analytics-stack.js';
 export * from './edge-stack.js';
 export * from './monitoring-stack.js';
+export * from './workflow-stack.js';

@@ -137,6 +137,10 @@ export class ContentStorage extends Construct {
       this.deployAsset('CodeDeployment', assetsDir, 'code', STORAGE_PREFIXES.code);
       // DDL + seed schema live under code/db/ so Lambdas/loaders can fetch them.
       this.deployAsset('DbSchemaDeployment', assetsDir, 'db', `${STORAGE_PREFIXES.code}db/`);
+      // Seed the staging/ prefix with a .keep marker so it exists before the
+      // patch-applier/promoter Lambdas write to it. (S3 has no real folders;
+      // this guarantees the base prefix is present.)
+      this.deployAsset('StagingDeployment', assetsDir, 'staging', STORAGE_PREFIXES.staging);
     }
   }
 

@@ -9,8 +9,9 @@ single-responsibility stacks so each component can be built out and deployed
 independently.
 
 > Status: **in progress**. `NetworkStack`, `DatabaseStack`, `StorageStack`,
-> `ComputeStack`, `EdgeStack`, and `MonitoringStack` (logging module) are
-> implemented; only `AiStack` and `AnalyticsStack` remain as documented
+> `ComputeStack`, `EdgeStack`, `WorkflowStack` (feedback-loop Step Function),
+> and `MonitoringStack` (logging module) are implemented; only `AiStack`
+> (Bedrock AgentCore harness) and `AnalyticsStack` remain as documented
 > placeholders. Components are fleshed out incrementally.
 
 📚 **Technical documentation** lives in [`docs/`](docs/README.md): architecture,
@@ -61,6 +62,7 @@ deployment, configuration, and security.
 | `AiStack`         | Bedrock agent        | ⬜ todo | Generative AI features (agent, KB, action groups)|
 | `AnalyticsStack`  | Athena               | ⬜ todo | Glue catalog + Athena workgroup over S3 data     |
 | `EdgeStack`       | CloudFront           | ✅ done | SPA via S3 (OAC) + `/api/*` to API, logs to `logs/cf_logs/` |
+| `WorkflowStack`   | Step Functions       | ✅ done | GEO feedback-loop state machine orchestrating the 3 worker Lambdas |
 | `MonitoringStack` | CloudWatch / S3 logs | ✅ done | Logging module: VPC Flow Logs → S3 `logs/vpc_flow/` (alarms/dashboards later) |
 
 Each stack composes a matching reusable construct from `lib/constructs`
@@ -228,6 +230,33 @@ avoid a Compute↔Edge cycle.
 Documented cdk-nag suppressions cover the demo distribution's default
 certificate and absence of WAF/geo-restrictions (CFR1/CFR2/CFR4).
 
+### Workflow layer (implemented)
+
+`WorkflowStack` → `BlogWorkflow` construct provisions the **GEO feedback-loop**
+as a Standard Step Functions state machine (`geo-demo-dev-feedback-loop`),
+mirroring the one discovered in the account. It orchestrates the three worker
+Lambdas and is **stage-only** (never writes to live content):
+
+```
+MeasureLive (citation-tracker, target=live)
+  → HasGap?  (a top_fix was diagnosed?)
+       yes → ApplyPatch (patch-applier → staging/)
+               → PatchChanged?
+                    yes → ReTestCandidate (citation-tracker, target=staging)
+                            → ValidateAndStage (promoter, stage-only)
+                            → Done
+                    no  → NoGapDone
+       no  → NoGapDone
+```
+
+The state machine's role only gets `lambda:InvokeFunction` on the three workers
+(granted automatically by the `LambdaInvoke` tasks). Execution logging to a
+DESTROY-policy CloudWatch log group + X-Ray tracing are on by default
+(`-c workflowLogging=false` to disable). The `StateMachineArn` is exported. It
+is **not scheduled** — invoke it on demand (the live one had no EventBridge
+rule). The `staging/` prefix it depends on is seeded with a `.keep` marker by
+the StorageStack so it always exists.
+
 ### Logging / observability (implemented)
 
 `MonitoringStack` → `BlogObservability` construct is the platform's **logging
@@ -341,6 +370,7 @@ Account/region resolve from the CDK CLI environment or the
 | `defaultRootObject`     | `index.html` | string       | SPA root object                                 |
 | `apiPathPattern`        | `/api/*` | string           | Path routed to the API origin                   |
 | `flowLogTrafficType`    | `ALL`  | ALL / ACCEPT / REJECT | VPC Flow Log traffic captured to S3          |
+| `workflowLogging`       | `true` | true/false         | Enable Step Function execution logging + tracing |
 | `retainData`     | `false`        | truthy                 | Retain stateful resources on stack deletion      |
 
 Examples:
@@ -354,9 +384,9 @@ npm run deploy -- --all -c cidr=10.42.0.0/16 -c maxAzs=2 -c natGateways=2
 ```
 
 To change a **default** for everyone, edit `NETWORK_DEFAULTS`,
-`DATABASE_DEFAULTS`, `STORAGE_DEFAULTS`, `COMPUTE_DEFAULTS`, `EDGE_DEFAULTS`, or
-`MONITORING_DEFAULTS` in `lib/config/index.ts`. To change a value for a **single
-deploy**, pass it as context — no code change needed.
+`DATABASE_DEFAULTS`, `STORAGE_DEFAULTS`, `COMPUTE_DEFAULTS`, `EDGE_DEFAULTS`,
+`MONITORING_DEFAULTS`, or `WORKFLOW_DEFAULTS` in `lib/config/index.ts`. To change
+a value for a **single deploy**, pass it as context — no code change needed.
 
 ## Compliance
 

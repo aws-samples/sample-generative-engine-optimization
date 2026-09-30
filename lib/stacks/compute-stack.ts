@@ -1,5 +1,6 @@
 import { CfnOutput, Stack } from 'aws-cdk-lib';
 import type * as ec2 from 'aws-cdk-lib/aws-ec2';
+import type * as lambda from 'aws-cdk-lib/aws-lambda';
 import type * as s3 from 'aws-cdk-lib/aws-s3';
 import { NagSuppressions } from 'cdk-nag';
 import type { Construct } from 'constructs';
@@ -128,5 +129,20 @@ export class ComputeStack extends Stack {
   /** API Gateway stage name (used as the CloudFront API origin path). */
   public get apiStageName(): string {
     return this.blogApi.api.deploymentStage.stageName;
+  }
+
+  /** The citation-tracker Lambda (for the WorkflowStack). */
+  public get citationTracker(): lambda.IFunction {
+    return this.blogApi.citationTracker;
+  }
+
+  /** The patch-applier Lambda (for the WorkflowStack). */
+  public get patchApplier(): lambda.IFunction {
+    return this.blogApi.patchApplier;
+  }
+
+  /** The promoter Lambda (for the WorkflowStack). */
+  public get promoter(): lambda.IFunction {
+    return this.blogApi.promoter;
   }
 }

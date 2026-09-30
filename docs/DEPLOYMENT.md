@@ -58,10 +58,11 @@ Always run `npm run build && npm run test && npm run synth` before deploying.
 The app defines eight stacks (IDs prefixed `geo-demo-dev-`):
 
 ```
-geo-demo-dev-network      geo-demo-dev-compute
-geo-demo-dev-storage      geo-demo-dev-edge
+geo-demo-dev-network      geo-demo-dev-edge
+geo-demo-dev-storage      geo-demo-dev-workflow
 geo-demo-dev-database     geo-demo-dev-monitoring
-geo-demo-dev-ai (todo)    geo-demo-dev-analytics (todo)
+geo-demo-dev-compute      geo-demo-dev-ai (todo)
+                          geo-demo-dev-analytics (todo)
 ```
 
 `ai` and `analytics` are placeholders (empty templates) and can be skipped.
@@ -83,13 +84,14 @@ npx cdk deploy geo-demo-dev-storage    --profile GEO_BLOG --require-approval nev
 npx cdk deploy geo-demo-dev-database   --profile GEO_BLOG --require-approval never 2>&1
 npx cdk deploy geo-demo-dev-compute    --profile GEO_BLOG --require-approval never 2>&1
 npx cdk deploy geo-demo-dev-edge       --profile GEO_BLOG --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-workflow   --profile GEO_BLOG --require-approval never 2>&1
 npx cdk deploy geo-demo-dev-monitoring --profile GEO_BLOG --require-approval never 2>&1
 ```
 
 Recommended first-deploy order (matches dependencies):
 
 ```
-network → storage → database → compute → edge → monitoring
+network → storage → database → compute → edge → workflow → monitoring
 ```
 
 > **API Gateway CloudWatch role (account-level, one-time per region).** The API

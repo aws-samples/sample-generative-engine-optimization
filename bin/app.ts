@@ -13,6 +13,7 @@ import {
   AnalyticsStack,
   EdgeStack,
   MonitoringStack,
+  WorkflowStack,
 } from '../lib/stacks/index.js';
 
 const app = new App();
@@ -81,6 +82,15 @@ const edge = new EdgeStack(app, `${prefix}-edge`, {
   apiStageName: compute.apiStageName,
 });
 // Dependencies on storage (bucket name) + compute (API origin) are implicit.
+
+const workflow = new WorkflowStack(app, `${prefix}-workflow`, {
+  ...baseProps,
+  citationTracker: compute.citationTracker,
+  patchApplier: compute.patchApplier,
+  promoter: compute.promoter,
+});
+// Dependency on compute is implicit (the three functions are passed in).
+void workflow;
 
 const monitoring = new MonitoringStack(app, `${prefix}-monitoring`, {
   ...baseProps,

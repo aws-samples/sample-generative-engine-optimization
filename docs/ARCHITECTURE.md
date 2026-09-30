@@ -60,6 +60,7 @@ matching reusable L3 construct from `lib/constructs`.
 | `DatabaseStack`   | `BlogDatabase`       | Aurora PostgreSQL Serverless v2 + Secrets Manager      |
 | `ComputeStack`    | `BlogApi`            | 4 Lambdas + public REST API Gateway                    |
 | `EdgeStack`       | `BlogDistribution`   | CloudFront distribution (SPA + API)                    |
+| `WorkflowStack`   | `BlogWorkflow`       | GEO feedback-loop Step Function (3 worker Lambdas)     |
 | `MonitoringStack` | `BlogObservability`  | Logging module (VPC Flow Logs → S3)                    |
 | `AiStack`         | `BlogBedrockAgent`   | Bedrock agent (placeholder)                            |
 | `AnalyticsStack`  | `BlogAnalytics`      | Glue catalog + Athena workgroup (placeholder)          |

@@ -141,6 +141,16 @@ export interface MonitoringConfig {
 }
 
 /**
+ * Workflow configuration for the {@link WorkflowStack} / BlogWorkflow construct
+ * (the GEO feedback-loop Step Function). Every value has a default (see
+ * {@link WORKFLOW_DEFAULTS}) and can be overridden via CDK context.
+ */
+export interface WorkflowConfig {
+  /** Enable CloudWatch logging for the state machine executions. */
+  readonly enableLogging: boolean;
+}
+
+/**
  * Central configuration for the blog platform. This is the single source of
  * truth; every stack derives names, sizing, and policies from it.
  */
@@ -170,6 +180,8 @@ export interface AppConfig {
   readonly edge: EdgeConfig;
   /** Monitoring / logging settings. */
   readonly monitoring: MonitoringConfig;
+  /** Workflow (Step Function feedback loop) settings. */
+  readonly workflow: WorkflowConfig;
 }
 
 const APP_NAME = 'geo-demo';
@@ -241,6 +253,11 @@ export const EDGE_DEFAULTS: EdgeConfig = {
 /** Centralized monitoring/logging defaults. Override via context. */
 export const MONITORING_DEFAULTS: MonitoringConfig = {
   flowLogTrafficType: 'ALL',
+};
+
+/** Centralized workflow defaults. Override via context. */
+export const WORKFLOW_DEFAULTS: WorkflowConfig = {
+  enableLogging: true,
 };
 
 /** Whether stateful data is retained on stack deletion, by default. */
@@ -584,6 +601,23 @@ function resolveMonitoring(source?: ContextSource): MonitoringConfig {
 }
 
 /**
+ * Resolve workflow config: start from {@link WORKFLOW_DEFAULTS}, then apply any
+ * per-value overrides supplied via CDK context.
+ *
+ * Supported context keys (all optional):
+ *   -c workflowLogging=false
+ */
+function resolveWorkflow(source?: ContextSource): WorkflowConfig {
+  return {
+    enableLogging: boolOverride(
+      readContext(source, 'workflowLogging'),
+      WORKFLOW_DEFAULTS.enableLogging,
+      'workflowLogging',
+    ),
+  };
+}
+
+/**
  * Build the active {@link AppConfig}.
  *
  * @param source  The CDK `App` (or anything exposing `node.tryGetContext`) so
@@ -613,5 +647,6 @@ export function getConfig(source?: App | ContextSource): AppConfig {
     compute: resolveCompute(source),
     edge: resolveEdge(source),
     monitoring: resolveMonitoring(source),
+    workflow: resolveWorkflow(source),
   };
 }
