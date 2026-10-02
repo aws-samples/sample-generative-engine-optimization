@@ -11,7 +11,7 @@ so an invalid value fails fast with a clear message.
 `getConfig(app)` (called in `bin/app.ts`) builds a single `AppConfig` object:
 
 1. Start from the `*_DEFAULTS` for each group (network, database, storage,
-   compute, edge, monitoring).
+   compute, edge, monitoring, workflow, analytics).
 2. For each key, read CDK context (`app.node.tryGetContext(key)`); if present,
    validate and apply it.
 3. Return the merged, typed config. Every stack derives its names, sizing, and
@@ -107,6 +107,18 @@ Additional (not in a `*_DEFAULTS` object; runtime input):
 | Key                  | Default | Validation             | Meaning                            |
 | -------------------- | ------- | ---------------------- | ---------------------------------- |
 | `flowLogTrafficType` | `ALL`   | `ALL`/`ACCEPT`/`REJECT` | VPC Flow Log traffic captured to S3 |
+
+### Analytics (`ANALYTICS_DEFAULTS`)
+
+Names for the Glue catalog + Athena workgroup the AnalyticsStack creates over
+the CloudFront logs. Each is overridable via CDK context like the other string
+values (e.g. `-c analyticsWorkgroupName=my-wg`).
+
+| Key                      | Default                 | Validation | Meaning                                 |
+| ------------------------ | ----------------------- | ---------- | --------------------------------------- |
+| `analyticsDatabaseName`  | `geo_demo_dev_logs`     | string     | Glue database holding the log table     |
+| `analyticsTableName`     | `cloudfront_logs`       | string     | Glue EXTERNAL table over `logs/cf_logs/` |
+| `analyticsWorkgroupName` | `geo-demo-dev-analytics` | string    | Athena workgroup name                    |
 
 ### Cross-cutting
 

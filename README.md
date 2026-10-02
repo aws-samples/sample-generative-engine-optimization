@@ -10,9 +10,10 @@ independently.
 
 > Status: **in progress**. `NetworkStack`, `DatabaseStack`, `StorageStack`,
 > `ComputeStack`, `EdgeStack`, `WorkflowStack` (feedback-loop Step Function),
-> and `MonitoringStack` (logging module) are implemented; only `AiStack`
-> (Bedrock AgentCore harness) and `AnalyticsStack` remain as documented
-> placeholders. Components are fleshed out incrementally.
+> `MonitoringStack` (logging module), and `AnalyticsStack` (Glue + Athena over
+> the CloudFront logs) are implemented; only `AiStack` (Bedrock AgentCore
+> harness) remains as a documented placeholder. Components are fleshed out
+> incrementally.
 
 📚 **Technical documentation** lives in [`docs/`](docs/README.md): architecture,
 deployment, configuration, and security.
@@ -48,7 +49,8 @@ deployment, configuration, and security.
 
  NetworkStack   : VPC, subnets, 1 NAT, VPC endpoints (incl. RDS Data API), SGs
  MonitoringStack: VPC Flow Logs -> S3 logs/vpc_flow/ (logging module)
- AiStack        : Bedrock agent (todo)      AnalyticsStack: Athena (todo)
+ AnalyticsStack : Glue DB + Athena workgroup over S3 logs/cf_logs/
+ AiStack        : Bedrock agent (todo)
 ```
 
 ### Stacks (`lib/stacks`)
@@ -60,7 +62,7 @@ deployment, configuration, and security.
 | `DatabaseStack`   | Aurora               | ✅ done | Serverless v2 cluster + Secrets Manager creds    |
 | `ComputeStack`    | Lambda + API         | ✅ done | 4 VPC Lambdas + public REST API (Octank Hospitality) |
 | `AiStack`         | Bedrock agent        | ⬜ todo | Generative AI features (agent, KB, action groups)|
-| `AnalyticsStack`  | Athena               | ⬜ todo | Glue catalog + Athena workgroup over S3 data     |
+| `AnalyticsStack`  | Athena               | ✅ done | Glue DB + EXTERNAL table + Athena workgroup over `logs/cf_logs/` |
 | `EdgeStack`       | CloudFront           | ✅ done | SPA via S3 (OAC) + `/api/*` to API, logs to `logs/cf_logs/` |
 | `WorkflowStack`   | Step Functions       | ✅ done | GEO feedback-loop state machine orchestrating the 3 worker Lambdas |
 | `MonitoringStack` | CloudWatch / S3 logs | ✅ done | Logging module: VPC Flow Logs → S3 `logs/vpc_flow/` (alarms/dashboards later) |
@@ -271,7 +273,7 @@ Log inventory:
 | VPC Flow Logs         | S3 `logs/vpc_flow/`             | MonitoringStack  |
 | CloudFront access     | S3 `logs/cf_logs/`              | EdgeStack        |
 | S3 server access      | S3 `logs/s3/` (self-logging)    | StorageStack     |
-| Athena query results  | S3 `logs/athena_logs/`          | AnalyticsStack (later) |
+| Athena query results  | S3 `logs/athena_logs/`          | AnalyticsStack   |
 | Lambda functions      | CloudWatch Logs (native only)   | ComputeStack     |
 | API Gateway access    | CloudWatch Logs (native only)   | ComputeStack     |
 
@@ -287,12 +289,34 @@ MonitoringStack imports the log bucket read-only by name to avoid a
 Monitoring↔Storage policy cycle. cdk-nag `AwsSolutions-VPC7` is suppressed on
 the NetworkStack because the flow log legitimately lives in another stack.
 
+### Analytics layer (implemented)
+
+`AnalyticsStack` provides SQL-over-S3 analytics on the CloudFront access logs
+via the Glue Data Catalog + Athena (built from L1 `Cfn*` resources):
+
+- **Glue database** `geo_demo_dev_logs` and a **Glue EXTERNAL table**
+  `cloudfront_logs` over the content bucket's `logs/cf_logs/` prefix, modeling
+  the 33-field CloudFront standard access-log schema (LazySimpleSerDe,
+  tab-delimited, `skip.header.line.count=2`). The table `DependsOn` the database.
+- **Athena workgroup** `geo-demo-dev-analytics` (enforced config, CloudWatch
+  metrics on, engine `AUTO`), with query results written to `logs/athena_logs/`.
+- Data comes from **30 sample CloudFront log files** seeded into `logs/cf_logs/`
+  by the StorageStack, plus the real access logs the live distribution delivers
+  there. A `SELECT count(*)` against the sample set returns ~4959 rows.
+
+**Cross-stack cycle avoidance.** The stack takes the content bucket **name only**
+(`contentBucketName`), so it just builds S3 location strings and grants nothing
+on the bucket — no Storage↔Analytics cycle. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trailing-slash detail (the
+Glue `Location` drops the trailing slash; the Athena `OutputLocation` keeps it)
+and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for a sample verification query.
+
 ## Project layout
 
 ```
 bin/app.ts            CDK app entry point — instantiates + wires all stacks
 lib/config/           Central config: defaults + CDK-context overrides + validation
-lib/stacks/           One stack per component (6 of 8 implemented; ai/analytics todo)
+lib/stacks/           One stack per component (7 of 8 implemented; ai todo)
 lib/constructs/       Reusable L3 constructs, one per component
 assets/               Content uploaded to S3: web_application/, code/ (Lambdas), db/ (DDL+seed)
 test/unit/            Jest synthesis tests (fast, no AWS calls)
@@ -371,6 +395,9 @@ Account/region resolve from the CDK CLI environment or the
 | `apiPathPattern`        | `/api/*` | string           | Path routed to the API origin                   |
 | `flowLogTrafficType`    | `ALL`  | ALL / ACCEPT / REJECT | VPC Flow Log traffic captured to S3          |
 | `workflowLogging`       | `true` | true/false         | Enable Step Function execution logging + tracing |
+| `analyticsDatabaseName` | `geo_demo_dev_logs` | string | Glue database for the CloudFront log table |
+| `analyticsTableName`    | `cloudfront_logs` | string   | Glue EXTERNAL table over `logs/cf_logs/`       |
+| `analyticsWorkgroupName`| `geo-demo-dev-analytics` | string | Athena workgroup name                   |
 | `retainData`     | `false`        | truthy                 | Retain stateful resources on stack deletion      |
 
 Examples:
@@ -385,8 +412,9 @@ npm run deploy -- --all -c cidr=10.42.0.0/16 -c maxAzs=2 -c natGateways=2
 
 To change a **default** for everyone, edit `NETWORK_DEFAULTS`,
 `DATABASE_DEFAULTS`, `STORAGE_DEFAULTS`, `COMPUTE_DEFAULTS`, `EDGE_DEFAULTS`,
-`MONITORING_DEFAULTS`, or `WORKFLOW_DEFAULTS` in `lib/config/index.ts`. To change
-a value for a **single deploy**, pass it as context — no code change needed.
+`MONITORING_DEFAULTS`, `WORKFLOW_DEFAULTS`, or `ANALYTICS_DEFAULTS` in
+`lib/config/index.ts`. To change a value for a **single deploy**, pass it as
+context — no code change needed.
 
 ## Compliance
 
@@ -397,7 +425,7 @@ before deploying.
 ## Next steps
 
 Flesh out each remaining stack/construct pair in dependency order:
-~~Network~~ → ~~Storage~~ → ~~Database~~ → ~~Compute~~ → Ai → Analytics → ~~Edge~~ → ~~Monitoring~~.
+~~Network~~ → ~~Storage~~ → ~~Database~~ → ~~Compute~~ → Ai → ~~Analytics~~ → ~~Edge~~ → ~~Monitoring~~.
 Add resource assertions to a dedicated unit test per stack (see
 `test/unit/network-stack.test.ts` as the template) and live checks to the
 integration suite as you go.

@@ -47,8 +47,8 @@ matching reusable L3 construct from `lib/constructs`.
    Cross-cutting:
      NetworkStack    — VPC, subnets, 1 NAT, VPC endpoints (incl. RDS Data API), SGs
      MonitoringStack — VPC Flow Logs → S3 logs/vpc_flow/ (logging module)
+     AnalyticsStack  — Glue catalog + Athena workgroup over S3 CloudFront logs
      AiStack         — Bedrock agent (todo)
-     AnalyticsStack  — Glue + Athena over logs/athena_logs/ (todo)
 ```
 
 ## Stacks
@@ -62,8 +62,8 @@ matching reusable L3 construct from `lib/constructs`.
 | `EdgeStack`       | `BlogDistribution`   | CloudFront distribution (SPA + API)                    |
 | `WorkflowStack`   | `BlogWorkflow`       | GEO feedback-loop Step Function (3 worker Lambdas)     |
 | `MonitoringStack` | `BlogObservability`  | Logging module (VPC Flow Logs → S3)                    |
+| `AnalyticsStack`  | (L1 resources)       | Glue catalog + Athena workgroup over CloudFront logs   |
 | `AiStack`         | `BlogBedrockAgent`   | Bedrock agent (placeholder)                            |
-| `AnalyticsStack`  | `BlogAnalytics`      | Glue catalog + Athena workgroup (placeholder)          |
 
 > Naming note: the construct classes still carry the `Blog*` prefix from the
 > original project name. This is deliberate — a broad rename was deferred to
@@ -108,7 +108,11 @@ transition `web_application/` to Infrequent Access.
 
 The repo's `assets/` tree is uploaded at deploy time via `BucketDeployment`:
 `assets/web_application → web_application/`, `assets/code → code/`,
-`assets/db → code/db/`.
+`assets/db → code/db/`, and `assets/logs/cf_logs → logs/cf_logs/`. The last
+seeds **30 sample CloudFront access-log files** (`.gz`) under `logs/cf_logs/` so
+the AnalyticsStack's Athena table has data to query from the first deploy. The
+live CloudFront distribution also delivers its **real** access logs to that same
+`logs/cf_logs/` prefix, so sample and real logs accumulate side by side.
 
 ### DatabaseStack
 
@@ -176,6 +180,44 @@ Routes S3-capable log sources into the shared bucket; leaves CloudWatch-only
 sources on CloudWatch. Currently configures **VPC Flow Logs → S3
 `logs/vpc_flow/`**. Dashboards and alarms are a later addition. Full log
 inventory is in the main README and [DEPLOYMENT.md](DEPLOYMENT.md).
+
+### AnalyticsStack (Athena)
+
+Provides SQL-over-S3 analytics on the CloudFront access logs, using the AWS Glue
+Data Catalog and an Athena workgroup. It is built from L1 (`Cfn*`) resources:
+
+- **Glue database** `geo_demo_dev_logs` — the catalog database that holds the
+  log table.
+- **Glue EXTERNAL table** `cloudfront_logs` — an external table over the content
+  bucket's `logs/cf_logs/` prefix, modeling the **33-field CloudFront standard
+  access-log schema** (in the exact field order CloudFront writes). It uses the
+  `LazySimpleSerDe`, **tab-delimited** fields (`field.delim`/`serialization.format`
+  = `\t`), and `skip.header.line.count = 2` to skip the two header lines
+  CloudFront prepends to each log file. The table carries an explicit
+  **DependsOn** on the database so CloudFormation creates the database first.
+- **Athena workgroup** `geo-demo-dev-analytics` —
+  `EnforceWorkGroupConfiguration = true`,
+  `PublishCloudWatchMetricsEnabled = true`, `EngineVersion = AUTO`,
+  `recursiveDeleteOption = true`, and query results written to
+  `logs/athena_logs/` in the content bucket.
+
+**No Storage↔Analytics cycle (by design).** The stack references the content
+bucket by **name only** (passed via the `contentBucketName` prop from the
+StorageStack), so it merely builds S3 location strings and **grants nothing** on
+the bucket. This deliberately avoids a Storage↔Analytics CloudFormation
+dependency cycle — the same one-directional-reference principle used for the
+Edge and Monitoring stacks (see "Cross-stack references" below).
+
+**Trailing-slash detail.** The Glue table `Location` string has **no** trailing
+slash (`s3://<bucket>/logs/cf_logs`), while the Athena workgroup
+`OutputLocation` **keeps** its trailing slash
+(`s3://<bucket>/logs/athena_logs/`). Both forms are required as written.
+
+The table's data comes from the **30 seeded sample log files** uploaded to
+`logs/cf_logs/` by the StorageStack, plus any **real** CloudFront access logs the
+live distribution delivers to the same prefix. All names
+(`databaseName` / `tableName` / `workgroupName`) are config values with
+`geo-demo-dev` defaults — see [CONFIGURATION.md](CONFIGURATION.md).
 
 ## Request flow: an AI engine querying hotel availability
 
@@ -248,7 +290,8 @@ NetworkStack  StorageStack
      │                │
      └──► MonitoringStack (Network + Storage)
 
- AiStack, AnalyticsStack: independent placeholders (depend on Storage)
+ AnalyticsStack: depends on Storage (bucket name only) — deploys after Storage
+ AiStack: independent placeholder (depends on Storage)
 ```
 
 ## Technology choices
