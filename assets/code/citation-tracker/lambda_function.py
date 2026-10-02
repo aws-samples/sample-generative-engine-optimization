@@ -157,6 +157,10 @@ def check_citation(response_text: str, match_terms: list) -> dict:
 # values are tags the patch-applier's FIX_MAP knows how to apply. This guarantees a
 
 # not-cited prompt yields an actionable, appliable fix even if the model's JSON is empty.
+# CUSTOMIZE FOR YOUR ENVIRONMENT (gap keyword inference): the keywords below are
+# hotel amenities (pool/pet/breakfast...). Replace them -- and FIX_MAP in
+# patch-applier -- with the content attributes that matter for YOUR entity type.
+# The Blog 2 agentic version replaces this table with an agent that infers the gap.
 
 _FIX_KEYWORDS = [
 
@@ -580,6 +584,12 @@ def lambda_handler(event, context):
 
                 "top_fix": diag["top_fix"],
 
+                # CUSTOMIZE FOR YOUR ENVIRONMENT (property resolution): the demo maps
+                # every diagnosed gap to ONE representative property (default_patch_slug),
+                # which works only because the demo has a fixed set of known pages.
+                # In production, resolve the SPECIFIC page the gap refers to -- parse the
+                # prompt/answer for the entity and match your catalog, or let an agent
+                # decide (the Blog 2 agentic version does this).
                 # Demo: map the diagnosed gap to a representative property to patch.
 
                 # A production version would resolve the specific property from the prompt.
