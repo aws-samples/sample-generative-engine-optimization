@@ -61,11 +61,13 @@ The app defines eight stacks (IDs prefixed `geo-demo-dev-`):
 geo-demo-dev-network      geo-demo-dev-edge
 geo-demo-dev-storage      geo-demo-dev-workflow
 geo-demo-dev-database     geo-demo-dev-monitoring
-geo-demo-dev-compute      geo-demo-dev-ai (todo)
-                          geo-demo-dev-analytics (todo)
+geo-demo-dev-compute      geo-demo-dev-analytics
+                          geo-demo-dev-ai (todo)
 ```
 
-`ai` and `analytics` are placeholders (empty templates) and can be skipped.
+`ai` is a placeholder (empty template) and can be skipped. `analytics` depends
+only on the storage stack for the content bucket **name** (via a CloudFormation
+export of the bucket name), so it deploys after `geo-demo-dev-storage`.
 
 ## Deploy
 
@@ -86,13 +88,17 @@ npx cdk deploy geo-demo-dev-compute    --profile GEO_BLOG --require-approval nev
 npx cdk deploy geo-demo-dev-edge       --profile GEO_BLOG --require-approval never 2>&1
 npx cdk deploy geo-demo-dev-workflow   --profile GEO_BLOG --require-approval never 2>&1
 npx cdk deploy geo-demo-dev-monitoring --profile GEO_BLOG --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-analytics  --profile GEO_BLOG --require-approval never 2>&1
 ```
 
 Recommended first-deploy order (matches dependencies):
 
 ```
-network → storage → database → compute → edge → workflow → monitoring
+network → storage → database → compute → edge → workflow → monitoring → analytics
 ```
+
+`analytics` only needs the storage stack (for the bucket name), so it can be
+deployed any time after `storage`.
 
 > **API Gateway CloudWatch role (account-level, one-time per region).** The API
 > stage enables access logging, which requires an account-level CloudWatch Logs
@@ -160,8 +166,8 @@ aws cloudformation describe-stacks --profile GEO_BLOG --region ca-central-1 `
   --query "Stacks[?starts_with(StackName,'geo-demo-dev')].[StackName,StackStatus]" `
   --output table
 ```
-**Expect:** every stack is `CREATE_COMPLETE` or `UPDATE_COMPLETE` (the `ai` and
-`analytics` placeholders are also `CREATE_COMPLETE`).
+**Expect:** every stack is `CREATE_COMPLETE` or `UPDATE_COMPLETE` (the `ai`
+placeholder is also `CREATE_COMPLETE`).
 
 ### Step 2 — Capture the endpoints from stack outputs
 
@@ -249,7 +255,35 @@ aws logs tail /aws/lambda/geo-demo-dev-api-handler --since 15m `
   --profile GEO_BLOG --region ca-central-1
 ```
 
-### Step 7 — Run the automated integration suite (optional)
+### Step 7 — Verify analytics (Athena over the CloudFront logs)
+
+The AnalyticsStack creates the Glue database `geo_demo_dev_logs`, the external
+table `cloudfront_logs`, and the Athena workgroup `geo-demo-dev-analytics`. Run
+a sample query to confirm the table resolves and reads the seeded logs.
+
+Start the query (the workgroup already sets the output location, so **no**
+`--result-configuration` flag is needed):
+
+```powershell
+aws athena start-query-execution --query-string "SELECT count(*) AS row_count FROM cloudfront_logs" --work-group "geo-demo-dev-analytics" --query-execution-context "Database=geo_demo_dev_logs" --profile GEO_BLOG --region ca-central-1
+```
+
+That returns a `QueryExecutionId`. Fetch the results with it:
+
+```powershell
+aws athena get-query-results --query-execution-id <QueryExecutionId> --profile GEO_BLOG --region ca-central-1
+```
+
+**Expect:** a single `row_count` value of about **4959** — the rows across the
+30 seeded sample log files (plus any real CloudFront logs delivered to the same
+`logs/cf_logs/` prefix, so the count grows over time). Query results land under
+`logs/athena_logs/` in the content bucket.
+
+You can also browse results in the **Athena console** (ca-central-1): select the
+`geo-demo-dev-analytics` workgroup and the `geo_demo_dev_logs` database, then run
+the same query from the editor.
+
+### Step 8 — Run the automated integration suite (optional)
 
 The repo ships integration tests that self-skip unless pointed at a deployment:
 ```powershell
@@ -276,7 +310,7 @@ foreach ($p in "/","/llms.txt","/api/properties","/api/properties/13/availabilit
 | CloudFront access     | S3 `logs/cf_logs/`                          |
 | VPC Flow Logs         | S3 `logs/vpc_flow/`                          |
 | S3 server access      | S3 `logs/s3/`                               |
-| Athena query results  | S3 `logs/athena_logs/` (once Analytics ships) |
+| Athena query results  | S3 `logs/athena_logs/`                      |
 | Lambda functions      | CloudWatch Logs (`/aws/lambda/geo-demo-dev-*`) |
 | API Gateway access    | CloudWatch Logs (`/geo-demo-dev/apigw/access`) |
 

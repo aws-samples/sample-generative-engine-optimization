@@ -141,6 +141,9 @@ export class ContentStorage extends Construct {
       // patch-applier/promoter Lambdas write to it. (S3 has no real folders;
       // this guarantees the base prefix is present.)
       this.deployAsset('StagingDeployment', assetsDir, 'staging', STORAGE_PREFIXES.staging);
+      // Sample CloudFront access logs (.gz) uploaded to logs/cf_logs/ so Athena
+      // has data to query. Uploaded as-is (no content-encoding transform).
+      this.deployAsset('CfLogsDeployment', assetsDir, 'logs/cf_logs', STORAGE_PREFIXES.cloudFrontLogs);
     }
   }
 
