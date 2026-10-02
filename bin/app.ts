@@ -14,6 +14,7 @@ import {
   EdgeStack,
   MonitoringStack,
   WorkflowStack,
+  ConciergeChatStack,
 } from '../lib/stacks/index.js';
 
 const app = new App();
@@ -67,7 +68,7 @@ const compute = new ComputeStack(app, `${prefix}-compute`, {
 // AiStack fronts the ComputeStack's REST API as MCP tools, so it must be
 // created after compute. Passing restApiId/apiStageName makes the dependency
 // on compute implicit — no explicit addStackDependency needed.
-new AiStack(app, `${prefix}-ai`, {
+const ai = new AiStack(app, `${prefix}-ai`, {
   ...baseProps,
   restApiId: compute.restApiId,
   apiStageName: compute.apiStageName,
@@ -86,13 +87,24 @@ analytics.addStackDependency(storage);
 // These stacks are instantiated for their side effect (registration with the
 // app); their dependencies are implicit via the references passed in, so no
 // local variable is kept.
-new EdgeStack(app, `${prefix}-edge`, {
+const edge = new EdgeStack(app, `${prefix}-edge`, {
   ...baseProps,
   // Pass the bucket NAME (imported read-only in EdgeStack) rather than the live
   // construct, to avoid a Storage<->Edge dependency cycle from the OAC policy.
   contentBucketName: storage.bucket.bucketName,
   apiOriginDomain: compute.apiOriginDomain,
   apiStageName: compute.apiStageName,
+});
+
+// ConciergeChatStack — the public on-site chat Lambda + Function URL. It sits
+// strictly downstream of both ai (harness ARN) and edge (CloudFront domain for
+// the CORS origin). Reading `ai.harnessArn` and `edge.domainName` makes those
+// dependencies implicit; neither reads back from this stack, so no cycle.
+new ConciergeChatStack(app, `${prefix}-concierge-chat`, {
+  ...baseProps,
+  harnessArn: ai.harnessArn,
+  cloudFrontDomainName: edge.domainName,
+  chatCodeDir: path.join(assetsDir, 'code', 'chat-endpoint'),
 });
 
 new WorkflowStack(app, `${prefix}-workflow`, {

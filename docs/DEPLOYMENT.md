@@ -55,19 +55,38 @@ Always run `npm run build && npm run test && npm run synth` before deploying.
 
 ## Stacks
 
-The app defines eight stacks (IDs prefixed `geo-demo-dev-`):
+The app defines ten stacks (IDs prefixed `geo-demo-dev-`):
 
 ```
 geo-demo-dev-network      geo-demo-dev-edge
 geo-demo-dev-storage      geo-demo-dev-workflow
 geo-demo-dev-database     geo-demo-dev-monitoring
 geo-demo-dev-compute      geo-demo-dev-analytics
-                          geo-demo-dev-ai (todo)
+geo-demo-dev-ai           geo-demo-dev-concierge-chat
 ```
 
-`ai` is a placeholder (empty template) and can be skipped. `analytics` depends
-only on the storage stack for the content bucket **name** (via a CloudFormation
-export of the bucket name), so it deploys after `geo-demo-dev-storage`.
+`analytics` depends only on the storage stack for the content bucket **name**
+(via a CloudFormation export of the bucket name), so it deploys after
+`geo-demo-dev-storage`. `ai` (the AgentCore Gateway + managed Harness concierge)
+reads the REST API id/stage from `compute`, so it deploys **after**
+`geo-demo-dev-compute` — see the [AiStack handoff](HANDOFF-cdk-aistack-concierge.md)
+for its design, console-resource mapping, and post-deploy validation.
+`concierge-chat` deploys **after both** `ai` (it needs the harness ARN as
+`HARNESS_ARN`) and `edge` (it needs the CloudFront domain to build the CORS
+`ALLOWED_ORIGIN`), so it is the last stack in order; no stack reads back from
+it, so there is no dependency cycle.
+
+> **AiStack deploy status.** The `ai` stack builds and `cdk synth`s clean, but
+> its AgentCore L1 resources (Gateway / GatewayTarget / Harness / HarnessEndpoint)
+> have **not yet been verified against a live deploy** in this account/region.
+> Treat it as the newest, least-exercised stack. The on-site chat Lambda
+> (`assets/code/chat-endpoint/`, aka `geo-onsite-chat`) now ships as its own
+> `geo-demo-dev-concierge-chat` stack, fronted by a public **Lambda Function
+> URL** (NOT API Gateway) — the `ChatFunctionUrl` output. It is wired with
+> `HARNESS_ARN` from the AiStack output and `ALLOWED_ORIGIN` from the EdgeStack
+> CloudFront domain, but it only returns real answers once the AiStack harness
+> is deployed **and healthy** — and the AiStack harness itself is not yet
+> verified against a live deploy (see the caveat above).
 
 ## Deploy
 
@@ -89,16 +108,23 @@ npx cdk deploy geo-demo-dev-edge       --profile GEO_BLOG --require-approval nev
 npx cdk deploy geo-demo-dev-workflow   --profile GEO_BLOG --require-approval never 2>&1
 npx cdk deploy geo-demo-dev-monitoring --profile GEO_BLOG --require-approval never 2>&1
 npx cdk deploy geo-demo-dev-analytics  --profile GEO_BLOG --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-ai         --profile GEO_BLOG --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-concierge-chat --profile GEO_BLOG --require-approval never 2>&1
 ```
 
 Recommended first-deploy order (matches dependencies):
 
 ```
-network → storage → database → compute → edge → workflow → monitoring → analytics
+network → storage → database → compute → edge → workflow → monitoring → analytics → ai → concierge-chat
 ```
 
 `analytics` only needs the storage stack (for the bucket name), so it can be
-deployed any time after `storage`.
+deployed any time after `storage`. `ai` needs `compute` (it reads the REST API
+id/stage), so deploy it after `compute`. `concierge-chat` needs **both** `ai`
+(harness ARN) and `edge` (CloudFront domain for CORS), so it is deployed last;
+its public endpoint is the `ChatFunctionUrl` output (a Lambda Function URL, not
+API Gateway) and only works once the AiStack harness is deployed and healthy
+(see the AiStack note under [Stacks](#stacks)).
 
 > **API Gateway CloudWatch role (account-level, one-time per region).** The API
 > stage enables access logging, which requires an account-level CloudWatch Logs
@@ -166,8 +192,9 @@ aws cloudformation describe-stacks --profile GEO_BLOG --region ca-central-1 `
   --query "Stacks[?starts_with(StackName,'geo-demo-dev')].[StackName,StackStatus]" `
   --output table
 ```
-**Expect:** every stack is `CREATE_COMPLETE` or `UPDATE_COMPLETE` (the `ai`
-placeholder is also `CREATE_COMPLETE`).
+**Expect:** every stack is `CREATE_COMPLETE` or `UPDATE_COMPLETE`. If you have
+not deployed `geo-demo-dev-ai` yet (it is optional and the least-exercised
+stack), it simply won't appear in the list — that is fine.
 
 ### Step 2 — Capture the endpoints from stack outputs
 
