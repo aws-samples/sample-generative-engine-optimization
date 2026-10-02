@@ -47,11 +47,6 @@ const database = new DatabaseStack(app, `${prefix}-database`, {
 // Note: dependencies on network + storage are implicit — passing vpc/SG and the
 // bucket name above already makes CDK order these stacks correctly.
 
-const ai = new AiStack(app, `${prefix}-ai`, baseProps);
-// AiStack is a placeholder with no output reference yet, so express the
-// dependency explicitly to keep deploy ordering sensible.
-ai.addStackDependency(storage);
-
 const compute = new ComputeStack(app, `${prefix}-compute`, {
   ...baseProps,
   vpc: network.vpc,
@@ -68,6 +63,15 @@ const compute = new ComputeStack(app, `${prefix}-compute`, {
 });
 // Dependencies on network + database + storage are implicit via the references
 // passed above (vpc, clusterArn, secret, bucket).
+
+// AiStack fronts the ComputeStack's REST API as MCP tools, so it must be
+// created after compute. Passing restApiId/apiStageName makes the dependency
+// on compute implicit — no explicit addStackDependency needed.
+new AiStack(app, `${prefix}-ai`, {
+  ...baseProps,
+  restApiId: compute.restApiId,
+  apiStageName: compute.apiStageName,
+});
 
 const analytics = new AnalyticsStack(app, `${prefix}-analytics`, {
   ...baseProps,
