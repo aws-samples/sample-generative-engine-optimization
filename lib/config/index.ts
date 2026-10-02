@@ -151,6 +151,20 @@ export interface WorkflowConfig {
 }
 
 /**
+ * Analytics configuration for the {@link AnalyticsStack} (Athena over the
+ * CloudFront access logs in S3). Every value has a default (see
+ * {@link ANALYTICS_DEFAULTS}) and can be overridden via CDK context.
+ */
+export interface AnalyticsConfig {
+  /** Glue database name holding the log table(s). */
+  readonly databaseName: string;
+  /** Glue table name over the CloudFront logs. */
+  readonly tableName: string;
+  /** Athena workgroup name. */
+  readonly workgroupName: string;
+}
+
+/**
  * Central configuration for the blog platform. This is the single source of
  * truth; every stack derives names, sizing, and policies from it.
  */
@@ -182,6 +196,8 @@ export interface AppConfig {
   readonly monitoring: MonitoringConfig;
   /** Workflow (Step Function feedback loop) settings. */
   readonly workflow: WorkflowConfig;
+  /** Analytics (Athena + Glue over CloudFront logs) settings. */
+  readonly analytics: AnalyticsConfig;
 }
 
 const APP_NAME = 'geo-demo';
@@ -258,6 +274,17 @@ export const MONITORING_DEFAULTS: MonitoringConfig = {
 /** Centralized workflow defaults. Override via context. */
 export const WORKFLOW_DEFAULTS: WorkflowConfig = {
   enableLogging: true,
+};
+
+/**
+ * Centralized analytics defaults. Names match the default `geo-demo-dev` prefix
+ * (Glue DB name underscored, workgroup `${prefix}-analytics`). Override via
+ * context.
+ */
+export const ANALYTICS_DEFAULTS: AnalyticsConfig = {
+  databaseName: 'geo_demo_dev_logs',
+  tableName: 'cloudfront_logs',
+  workgroupName: 'geo-demo-dev-analytics',
 };
 
 /** Whether stateful data is retained on stack deletion, by default. */
@@ -618,6 +645,27 @@ function resolveWorkflow(source?: ContextSource): WorkflowConfig {
 }
 
 /**
+ * Resolve analytics config: start from {@link ANALYTICS_DEFAULTS}, then apply
+ * any per-value overrides supplied via CDK context.
+ *
+ * Supported context keys (all optional):
+ *   -c analyticsDatabaseName=geo_demo_dev_logs
+ *   -c analyticsTableName=cloudfront_logs
+ *   -c analyticsWorkgroupName=geo-demo-dev-analytics
+ */
+function resolveAnalytics(source?: ContextSource): AnalyticsConfig {
+  return {
+    databaseName: String(
+      readContext(source, 'analyticsDatabaseName') ?? ANALYTICS_DEFAULTS.databaseName,
+    ),
+    tableName: String(readContext(source, 'analyticsTableName') ?? ANALYTICS_DEFAULTS.tableName),
+    workgroupName: String(
+      readContext(source, 'analyticsWorkgroupName') ?? ANALYTICS_DEFAULTS.workgroupName,
+    ),
+  };
+}
+
+/**
  * Build the active {@link AppConfig}.
  *
  * @param source  The CDK `App` (or anything exposing `node.tryGetContext`) so
@@ -648,5 +696,6 @@ export function getConfig(source?: App | ContextSource): AppConfig {
     edge: resolveEdge(source),
     monitoring: resolveMonitoring(source),
     workflow: resolveWorkflow(source),
+    analytics: resolveAnalytics(source),
   };
 }

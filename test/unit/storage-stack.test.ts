@@ -138,6 +138,7 @@ describe('StorageStack uploads source assets when assetsDir is provided', () => 
       ['code', 'handler.py'],
       ['db', 'schema.sql'],
       ['staging', '.keep'],
+      ['logs/cf_logs', 'E2EXAMPLE.gz'],
     ] as const) {
       fs.mkdirSync(path.join(assetsDir, sub), { recursive: true });
       fs.writeFileSync(path.join(assetsDir, sub, file), '// placeholder');
@@ -157,7 +158,7 @@ describe('StorageStack uploads source assets when assetsDir is provided', () => 
       assetsDir,
     });
     const template = Template.fromStack(stack);
-    // web_application, code, db, and staging -> 4 BucketDeployment resources.
-    template.resourceCountIs('Custom::CDKBucketDeployment', 4);
+    // web_application, code, db, staging, and logs/cf_logs -> 5 BucketDeployment resources.
+    template.resourceCountIs('Custom::CDKBucketDeployment', 5);
   });
 });

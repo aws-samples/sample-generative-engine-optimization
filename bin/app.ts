@@ -69,8 +69,14 @@ const compute = new ComputeStack(app, `${prefix}-compute`, {
 // Dependencies on network + database + storage are implicit via the references
 // passed above (vpc, clusterArn, secret, bucket).
 
-const analytics = new AnalyticsStack(app, `${prefix}-analytics`, baseProps);
-// Placeholder with no output reference yet — explicit dependency.
+const analytics = new AnalyticsStack(app, `${prefix}-analytics`, {
+  ...baseProps,
+  // Pass the bucket NAME (used only to build Glue/Athena S3 location strings)
+  // rather than the live construct, to avoid a Storage<->Analytics cycle.
+  contentBucketName: storage.bucket.bucketName,
+});
+// The bucket name is a plain string, not a construct ref, so keep the explicit
+// dependency for sensible deploy ordering.
 analytics.addStackDependency(storage);
 
 // These stacks are instantiated for their side effect (registration with the
