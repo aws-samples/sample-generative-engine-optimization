@@ -225,22 +225,43 @@ export class BlogApi extends Construct {
 
     const integration = new apigateway.LambdaIntegration(this.apiHandler);
 
+    // Each method declares methodResponses AND an operationName. The AgentCore
+    // Gateway (AiStack) builds an api-gateway target by fetching and parsing the
+    // API's EXPORTED OpenAPI spec, and it requires, per operation:
+    //   - a `responses` object  → provided by methodResponses (OpenAPI 3.0
+    //     requires it; a method without it exports an operation with none, and
+    //     the parser rejects it: "...(get).responses is missing").
+    //   - an `operationId`      → provided by operationName; the gateway uses it
+    //     to name the derived MCP tool, and rejects operations without one
+    //     ("...has no operationId and no override provided").
+    // The operationName values are the MCP tool names the concierge harness
+    // (AiStack system prompt) refers to.
+    const responses: apigateway.MethodResponse[] = [
+      { statusCode: '200' },
+      { statusCode: '400' },
+      { statusCode: '404' },
+    ];
+    const opts = (operationName: string): apigateway.MethodOptions => ({
+      operationName,
+      methodResponses: responses,
+    });
+
     // Route tree discovered from the live REST API:
-    //   GET  /properties
-    //   GET  /properties/{propertyId}
-    //   GET  /properties/{propertyId}/rates
-    //   GET  /properties/{propertyId}/availability
-    //   POST /reservations
+    //   GET  /properties                                → searchProperties
+    //   GET  /properties/{propertyId}                   → getProperty
+    //   GET  /properties/{propertyId}/rates             → getRates
+    //   GET  /properties/{propertyId}/availability      → getAvailability
+    //   POST /reservations                              → createReservation
     const properties = this.api.root.addResource('properties');
-    properties.addMethod('GET', integration);
+    properties.addMethod('GET', integration, opts('searchProperties'));
 
     const property = properties.addResource('{propertyId}');
-    property.addMethod('GET', integration);
-    property.addResource('rates').addMethod('GET', integration);
-    property.addResource('availability').addMethod('GET', integration);
+    property.addMethod('GET', integration, opts('getProperty'));
+    property.addResource('rates').addMethod('GET', integration, opts('getRates'));
+    property.addResource('availability').addMethod('GET', integration, opts('getAvailability'));
 
     const reservations = this.api.root.addResource('reservations');
-    reservations.addMethod('POST', integration);
+    reservations.addMethod('POST', integration, opts('createReservation'));
 
     this.apiEndpoint = this.api.url;
   }

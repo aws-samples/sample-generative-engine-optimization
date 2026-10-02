@@ -91,11 +91,38 @@ export class AiStack extends Stack {
       roleArn: gatewayRole.roleArn,
     });
 
+    // The harness must be able to CALL its gateway (the gateway's inbound auth is
+    // AWS_IAM, so the harness presents SigV4). Without this the MCP client fails
+    // to initialize at invoke time with a 4xx ("Failed to start MCP client").
+    // Mirrors the live geo-harness-exec-role's InvokeAgentCoreGateway +
+    // AgentCoreRuntime statements. Scoped to this gateway's ARN.
+    harnessRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'InvokeAgentCoreGateway',
+        actions: [
+          'bedrock-agentcore:InvokeGateway',
+          'bedrock-agentcore:GetGateway',
+          'bedrock-agentcore:ListGatewayTargets',
+        ],
+        resources: [gateway.attrGatewayArn],
+      }),
+    );
+    harnessRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'AgentCoreRuntime',
+        actions: ['bedrock-agentcore:InvokeAgentRuntime', 'bedrock-agentcore:GetWorkloadAccessToken'],
+        resources: ['*'],
+      }),
+    );
+
     // ── Gateway target: the existing REST API, auto-translated into MCP tools. ──
     // The MCP apiGateway config references the REST API by id + stage, and the
     // tool filter exposes the GET methods the api-handler serves (GET /properties …).
     const apiTarget = new agentcore.CfnGatewayTarget(this, 'GeoApiTarget', {
-      gatewayIdentifier: gateway.attrGatewayArn,
+      // GatewayIdentifier wants the gateway ID (a short pattern-constrained
+      // string), NOT the ARN — attrGatewayArn fails the service's pattern
+      // validation. Use attrGatewayIdentifier.
+      gatewayIdentifier: gateway.attrGatewayIdentifier,
       name: `${prefix}-api`,
       targetConfiguration: {
         mcp: {
@@ -139,18 +166,21 @@ export class AiStack extends Stack {
           },
         },
       ],
+      // Explicitly opt OUT of memory (single-turn Q&A), matching the live
+      // geo-concierge harness. Without this the service defaults memory ON, and
+      // the runtime calls bedrock-agentcore:ListEvents at invoke time — which
+      // AccessDenies against this exec role (and the live role grants no memory
+      // actions either, because the live harness has memory disabled).
+      memory: { disabled: {} },
       maxIterations: 10,
       timeoutSeconds: 120,
     });
     harness.addDependency(apiTarget); // tools must exist before the harness references them
 
-    // ── Stable DEFAULT endpoint callers (the geo-onsite-chat Lambda) invoke. ──
-    const endpoint = new agentcore.CfnHarnessEndpoint(this, 'GeoConciergeEndpoint', {
-      harnessId: harness.attrHarnessId,
-      endpointName: 'DEFAULT',
-    });
-    endpoint.addDependency(harness);
-
+    // No explicit HarnessEndpoint: AgentCore auto-creates a DEFAULT endpoint
+    // with the harness (the name 'DEFAULT' is reserved and cannot be created
+    // explicitly — the service rejects it with ValidationException). The
+    // geo-onsite-chat Lambda invokes with no qualifier, which targets DEFAULT.
     this._harnessArn = harness.attrArn;
 
     new CfnOutput(this, 'HarnessArn', {

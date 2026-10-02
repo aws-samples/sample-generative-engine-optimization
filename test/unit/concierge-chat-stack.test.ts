@@ -23,7 +23,7 @@ function synth(context: Record<string, unknown> = {}): Template {
   return Template.fromStack(stack);
 }
 
-describe('ConciergeChatStack (on-site chat Lambda + Function URL)', () => {
+describe('ConciergeChatStack (on-site chat Lambda + REST API)', () => {
   const template = synth();
 
   it('creates a python3.13 Lambda with the right handler and env vars', () => {
@@ -45,14 +45,18 @@ describe('ConciergeChatStack (on-site chat Lambda + Function URL)', () => {
     expect(Object.values(fns).every((f) => !f.Properties?.VpcConfig)).toBe(true);
   });
 
-  it('fronts the function with a public Function URL (authType NONE) + CORS', () => {
-    template.hasResourceProperties('AWS::Lambda::Url', {
-      AuthType: 'NONE',
-      Cors: Match.objectLike({
-        AllowOrigins: [ALLOWED_ORIGIN],
-        AllowMethods: ['POST'],
-        AllowHeaders: ['content-type'],
-      }),
+  it('fronts the function with a public REST API exposing POST /chat', () => {
+    template.hasResourceProperties('AWS::ApiGateway::RestApi', {
+      Name: 'geo-demo-dev-concierge-chat-api',
+    });
+    // POST /chat method on the API
+    template.hasResourceProperties('AWS::ApiGateway::Method', {
+      HttpMethod: 'POST',
+      AuthorizationType: 'NONE',
+    });
+    // A /chat resource
+    template.hasResourceProperties('AWS::ApiGateway::Resource', {
+      PathPart: 'chat',
     });
   });
 
@@ -79,7 +83,7 @@ describe('ConciergeChatStack (on-site chat Lambda + Function URL)', () => {
     }
   });
 
-  it('exports the chat Function URL', () => {
-    template.hasOutput('ChatFunctionUrl', {});
+  it('exports the chat API endpoint', () => {
+    template.hasOutput('ChatApiEndpoint', {});
   });
 });

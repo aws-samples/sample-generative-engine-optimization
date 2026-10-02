@@ -1,4 +1,5 @@
 import { CfnOutput, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
@@ -24,13 +25,13 @@ export interface ConciergeChatStackProps extends BaseStackProps {
 }
 
 /**
- * ConciergeChatStack — the on-site concierge chat Lambda + public Function URL.
+ * ConciergeChatStack — the on-site concierge chat Lambda + public REST API.
  *
  * Deploys the browser-facing chat endpoint (`assets/code/chat-endpoint/`) as a
- * single Python Lambda fronted by a Lambda **Function URL** (NOT API Gateway).
- * The function invokes the AgentCore managed harness server-side and returns the
- * reply. It calls only the AgentCore data plane, so it runs OUTSIDE the VPC with
- * no Aurora / content-bucket access.
+ * single Python Lambda fronted by an **API Gateway REST API** (`POST /chat`
+ * with CORS). The function invokes the AgentCore managed harness server-side
+ * and returns the reply. It calls only the AgentCore data plane, so it runs
+ * OUTSIDE the VPC with no Aurora / content-bucket access.
  *
  * Downstream of both AiStack (harness ARN) and EdgeStack (CloudFront domain for
  * CORS); neither reads anything back from this stack, so there is no dependency
@@ -61,8 +62,12 @@ export class ConciergeChatStack extends Stack {
       runtime: lambda.Runtime.PYTHON_3_13,
       handler: 'lambda_function.handler',
       code: lambda.Code.fromAsset(chatCodeDir),
-      memorySize: 128,
-      timeout: Duration.seconds(30),
+      memorySize: 256,
+      // The agent loop (Bedrock reasoning + gateway tool calls) can run well
+      // past 30s. The harness itself allows up to 120s (CfnHarness
+      // timeoutSeconds), so give the Lambda headroom beyond that to receive and
+      // relay the streamed reply. Lambda Function URLs allow up to 15 min.
+      timeout: Duration.seconds(150),
       logGroup,
       environment: {
         HARNESS_ARN: harnessArn,
@@ -80,24 +85,48 @@ export class ConciergeChatStack extends Stack {
       }),
     );
 
-    // Public, origin-locked Function URL. authType NONE is deliberate: this is
-    // the demo's one public, unauthenticated, browser-to-server route (CORS is
-    // locked to the CloudFront origin and the Lambda self-validates input),
-    // mirroring the ComputeStack's "intentionally public" APIG4/COG4 rationale.
-    // AwsSolutionsChecks has no Function-URL-auth rule, so NONE raises no finding.
-    const fnUrl = fn.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.NONE,
-      cors: {
-        allowedOrigins: [allowedOrigin],
-        allowedMethods: [lambda.HttpMethod.POST],
-        allowedHeaders: ['content-type'],
+    // Public REST API: POST /chat (+ CORS preflight). This is the demo's one
+    // public, unauthenticated, browser-to-server route — CORS is locked to the
+    // CloudFront origin and the Lambda self-validates input. API Gateway (rather
+    // than a Lambda Function URL) is used because this account rejects public
+    // Function URLs; the REST API also matches the committed OpenAPI intent.
+    // Access-log group for the API stage (explicit DESTROY so teardown is clean).
+    const apiAccessLogs = new logs.LogGroup(this, 'ChatApiAccessLogs', {
+      logGroupName: `/${prefix}/concierge-chat/apigw/access`,
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: config.retainData ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+    });
+
+    const api = new apigateway.RestApi(this, 'ChatApi', {
+      restApiName: `${prefix}-concierge-chat-api`,
+      description: 'Public on-site concierge chat endpoint (POST /chat).',
+      deployOptions: {
+        stageName: config.compute.apiStageName,
+        // Stage logging (addresses APIG1 access logs + APIG6 execution logs).
+        // The account-level API Gateway CloudWatch role is created by the
+        // ComputeStack (one per region), so stage logging works here too.
+        accessLogDestination: new apigateway.LogGroupLogDestination(apiAccessLogs),
+        accessLogFormat: apigateway.AccessLogFormat.jsonWithStandardFields(),
+        loggingLevel: apigateway.MethodLoggingLevel.INFO,
+      },
+      defaultCorsPreflightOptions: {
+        allowOrigins: [allowedOrigin],
+        allowMethods: ['POST', 'OPTIONS'],
+        allowHeaders: ['Content-Type'],
       },
     });
 
-    new CfnOutput(this, 'ChatFunctionUrl', {
-      value: fnUrl.url,
-      description: 'Public Lambda Function URL for the on-site concierge chat widget',
-      exportName: `${prefix}-chat-function-url`,
+    const chat = api.root.addResource('chat');
+    chat.addMethod('POST', new apigateway.LambdaIntegration(fn), {
+      operationName: 'conciergeChat',
+      methodResponses: [{ statusCode: '200' }, { statusCode: '400' }, { statusCode: '502' }],
+    });
+
+    new CfnOutput(this, 'ChatApiEndpoint', {
+      // Full invoke URL for the chat turn, e.g. https://<id>.execute-api.<region>.amazonaws.com/<stage>/chat
+      value: `${api.url}chat`,
+      description: 'Public API Gateway URL for the on-site concierge chat (POST /chat)',
+      exportName: `${prefix}-chat-api-endpoint`,
     });
     new CfnOutput(this, 'ChatFunctionName', {
       value: fn.functionName,
@@ -131,6 +160,43 @@ export class ConciergeChatStack extends Stack {
           'scoped to exactly one harness ARN (the geo-concierge harness); there ' +
           'is no narrower resource form. Defensive — the single-ARN grant is ' +
           'unlikely to trip IAM5.',
+      },
+      {
+        id: 'AwsSolutions-IAM4',
+        reason:
+          'The API Gateway account role uses the AWS-managed ' +
+          'AmazonAPIGatewayPushToCloudWatchLogs policy required to enable stage ' +
+          'access/execution logging — the standard least-privilege baseline, ' +
+          'matching the ComputeStack API.',
+        appliesTo: [
+          'Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs',
+        ],
+      },
+      {
+        id: 'AwsSolutions-APIG2',
+        reason:
+          'Request validation is handled inside the chat Lambda (JSON parse, ' +
+          'non-empty message, length cap); the endpoint is a thin proxy to the ' +
+          'AgentCore harness and does not use model-based request validation.',
+      },
+      {
+        id: 'AwsSolutions-APIG3',
+        reason:
+          'WAF association is planned at the CloudFront edge (EdgeStack) rather ' +
+          'than per-API for this demo scope, matching the ComputeStack API.',
+      },
+      {
+        id: 'AwsSolutions-APIG4',
+        reason:
+          'The chat endpoint is intentionally public and unauthenticated — it is ' +
+          'the browser-to-server route for the on-site concierge widget. CORS is ' +
+          'locked to the CloudFront origin and the Lambda self-validates input.',
+      },
+      {
+        id: 'AwsSolutions-COG4',
+        reason:
+          'No Cognito user pool authorizer: the chat endpoint is intentionally ' +
+          'public for the on-site widget, consistent with the data API.',
       },
     ]);
   }
