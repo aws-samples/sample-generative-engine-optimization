@@ -131,6 +131,11 @@ export class ComputeStack extends Stack {
     return this.blogApi.api.deploymentStage.stageName;
   }
 
+  /** REST API id (for the AgentCore Gateway target in the AiStack). */
+  public get restApiId(): string {
+    return this.blogApi.api.restApiId;
+  }
+
   /** The citation-tracker Lambda (for the WorkflowStack). */
   public get citationTracker(): lambda.IFunction {
     return this.blogApi.citationTracker;
