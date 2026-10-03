@@ -29,7 +29,9 @@ module.exports = {
       transform: tsJestTransform,
       moduleNameMapper,
       // Integration tests hit real AWS APIs; give them room to run.
-      testTimeout: 300000,
+      // `testTimeout` is a global-only Jest option (not valid per-project), so
+      // it is applied inside the integration suite via setupFilesAfterEnv.
+      setupFilesAfterEnv: ['<rootDir>/test/integration/jest.setup.ts'],
     },
   ],
 };

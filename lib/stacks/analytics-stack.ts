@@ -57,6 +57,97 @@ const CLOUDFRONT_LOG_COLUMNS: ReadonlyArray<{ name: string; type: string }> = [
 ];
 
 /**
+ * Saved AI-crawler detection queries over the `cloudfront_logs` table. Deployed
+ * as Athena named queries on the analytics workgroup so operators can run them
+ * from the console and so they are version-controlled alongside the table.
+ */
+const AI_CRAWLER_QUERIES: ReadonlyArray<{ name: string; description: string; sql: string }> = [
+  {
+    name: 'ai-crawler-daily-summary',
+    description: 'Query 1: Daily AI crawler traffic summary — which AI crawlers visited and how many requests per day.',
+    sql: `SELECT
+  "date" AS day,
+  CASE
+    WHEN cs_user_agent LIKE '%GPTBot%'          THEN 'GPTBot (OpenAI)'
+    WHEN cs_user_agent LIKE '%ChatGPT-User%'    THEN 'ChatGPT-User (OpenAI)'
+    WHEN cs_user_agent LIKE '%ClaudeBot%'       THEN 'ClaudeBot (Anthropic)'
+    WHEN cs_user_agent LIKE '%PerplexityBot%'   THEN 'PerplexityBot'
+    WHEN cs_user_agent LIKE '%Google-Extended%' THEN 'Google-Extended'
+    WHEN cs_user_agent LIKE '%Amazonbot%'       THEN 'Amazonbot (Amazon)'
+    ELSE 'Other AI Crawler'
+  END AS ai_crawler,
+  COUNT(*) AS requests,
+  COUNT(DISTINCT cs_uri_stem) AS unique_pages
+FROM cloudfront_logs
+WHERE cs_user_agent LIKE '%GPTBot%'
+   OR cs_user_agent LIKE '%ChatGPT-User%'
+   OR cs_user_agent LIKE '%ClaudeBot%'
+   OR cs_user_agent LIKE '%PerplexityBot%'
+   OR cs_user_agent LIKE '%Google-Extended%'
+   OR cs_user_agent LIKE '%Amazonbot%'
+GROUP BY 1, 2
+ORDER BY 1 DESC, 3 DESC;`,
+  },
+  {
+    name: 'ai-crawler-top-pages',
+    description: 'Query 2: Most-visited pages by AI crawlers over the last 30 days — which content AI engines consume most.',
+    sql: `SELECT
+  cs_uri_stem AS page,
+  COUNT(*) AS total_ai_requests,
+  COUNT(DISTINCT CASE WHEN cs_user_agent LIKE '%GPTBot%' THEN 1 END) AS gptbot,
+  COUNT(DISTINCT CASE WHEN cs_user_agent LIKE '%ClaudeBot%' THEN 1 END) AS claudebot,
+  COUNT(DISTINCT CASE WHEN cs_user_agent LIKE '%PerplexityBot%' THEN 1 END) AS perplexitybot,
+  COUNT(DISTINCT CASE WHEN cs_user_agent LIKE '%Google-Extended%' THEN 1 END) AS google_extended
+FROM cloudfront_logs
+WHERE (cs_user_agent LIKE '%GPTBot%'
+    OR cs_user_agent LIKE '%ChatGPT-User%'
+    OR cs_user_agent LIKE '%ClaudeBot%'
+    OR cs_user_agent LIKE '%PerplexityBot%'
+    OR cs_user_agent LIKE '%Google-Extended%'
+    OR cs_user_agent LIKE '%Amazonbot%')
+  AND "date" >= current_date - interval '30' day
+GROUP BY 1
+ORDER BY 2 DESC
+LIMIT 50;`,
+  },
+  {
+    name: 'ai-crawler-discoverability-gap',
+    description: 'Query 3: Property pages NEVER visited by AI crawlers in the last 30 days — the discoverability gap.',
+    sql: `SELECT DISTINCT cs_uri_stem AS page
+FROM cloudfront_logs
+WHERE cs_uri_stem LIKE '/properties/%'
+  AND "date" >= current_date - interval '30' day
+EXCEPT
+SELECT DISTINCT cs_uri_stem
+FROM cloudfront_logs
+WHERE (cs_user_agent LIKE '%GPTBot%'
+    OR cs_user_agent LIKE '%ClaudeBot%'
+    OR cs_user_agent LIKE '%PerplexityBot%'
+    OR cs_user_agent LIKE '%Google-Extended%'
+    OR cs_user_agent LIKE '%Amazonbot%')
+  AND "date" >= current_date - interval '30' day;`,
+  },
+  {
+    name: 'ai-crawler-weekly-trend',
+    description: 'Query 4: Week-over-week AI crawler trend over the last 90 days — for dashboards/alerting on traffic shifts.',
+    sql: `SELECT
+  date_trunc('week', "date") AS week,
+  COUNT(*) AS ai_crawler_requests,
+  COUNT(DISTINCT cs_uri_stem) AS unique_pages_crawled
+FROM cloudfront_logs
+WHERE (cs_user_agent LIKE '%GPTBot%'
+    OR cs_user_agent LIKE '%ChatGPT-User%'
+    OR cs_user_agent LIKE '%ClaudeBot%'
+    OR cs_user_agent LIKE '%PerplexityBot%'
+    OR cs_user_agent LIKE '%Google-Extended%'
+    OR cs_user_agent LIKE '%Amazonbot%')
+  AND "date" >= current_date - interval '90' day
+GROUP BY 1
+ORDER BY 1 DESC;`,
+  },
+];
+
+/**
  * AnalyticsStack — Athena analytics over the CloudFront access logs in S3.
  *
  * Owns:
@@ -142,6 +233,26 @@ export class AnalyticsStack extends Stack {
       },
     });
     workgroup.applyRemovalPolicy(removal);
+
+    // Saved AI-crawler detection queries, attached to the workgroup + database
+    // so they are deployed, version-controlled, and runnable from the Athena
+    // console. They validate the cloudfront_logs table (verified live: the
+    // seeded sample logs contain GPTBot/ClaudeBot/PerplexityBot traffic).
+    // NOTE: the queries that filter `"date" >= current_date - interval 'N' day`
+    // only return rows within that window; the seeded sample logs are dated
+    // earlier, so widen the window (or remove the date filter) to see sample
+    // data in a demo.
+    AI_CRAWLER_QUERIES.forEach((nq, i) => {
+      const named = new athena.CfnNamedQuery(this, `AiCrawlerQuery${i + 1}`, {
+        database: databaseName,
+        workGroup: workgroupName,
+        name: `${config.prefix}-${nq.name}`,
+        description: nq.description,
+        queryString: nq.sql,
+      });
+      named.addDependency(workgroup);
+      named.addDependency(table);
+    });
 
     this.glueDatabaseName = databaseName;
     this.glueTableName = tableName;
