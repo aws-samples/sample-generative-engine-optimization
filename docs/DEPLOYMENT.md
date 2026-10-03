@@ -79,14 +79,28 @@ it, so there is no dependency cycle.
 > **AiStack deploy status.** The `ai` stack builds and `cdk synth`s clean, but
 > its AgentCore L1 resources (Gateway / GatewayTarget / Harness / HarnessEndpoint)
 > have **not yet been verified against a live deploy** in this account/region.
-> Treat it as the newest, least-exercised stack. The on-site chat Lambda
-> (`assets/code/chat-endpoint/`, aka `geo-onsite-chat`) now ships as its own
-> `geo-demo-dev-concierge-chat` stack, fronted by a public **Lambda Function
-> URL** (NOT API Gateway) — the `ChatFunctionUrl` output. It is wired with
-> `HARNESS_ARN` from the AiStack output and `ALLOWED_ORIGIN` from the EdgeStack
-> CloudFront domain, but it only returns real answers once the AiStack harness
-> is deployed **and healthy** — and the AiStack harness itself is not yet
-> verified against a live deploy (see the caveat above).
+> Treat it as the newest, least-exercised stack. The on-site chat ships as its
+> own `geo-demo-dev-concierge-chat` stack, fronted by a public **API Gateway
+> REST API** (`geo-demo-dev-concierge-chat-api`) using an **async submit+poll**
+> flow:
+>
+> - `POST /chat` returns **202** `{jobId, status:"PENDING"}` immediately (the
+>   `ChatSubmitEndpoint` output);
+> - a background **worker** Lambda (`geo-onsite-chat`, from
+>   `assets/code/chat-endpoint/`) runs the agent and records the result;
+> - the browser polls `GET /chat/{jobId}` (base URL is the `ChatApiBaseUrl`
+>   output) until `status` is `DONE` (`{reply, stopReason}`) or `ERROR`.
+>
+> **Why async:** the AgentCore agent loop runs ~49s, but API Gateway REST APIs
+> have a hard **29s** integration timeout, so a synchronous `POST /chat` always
+> times out even though the Lambda succeeds. Lambda Function URLs — the obvious
+> alternative — are **blocked by an account guardrail** (403 at the edge). The
+> submit/worker/poll split is the way to expose the ~49s harness to the browser.
+>
+> It is wired with `HARNESS_ARN` from the AiStack output and `ALLOWED_ORIGIN`
+> from the EdgeStack CloudFront domain, but it only returns real answers once
+> the AiStack harness is deployed **and healthy** — and the AiStack harness
+> itself is not yet verified against a live deploy (see the caveat above).
 
 ## Deploy
 
@@ -121,10 +135,13 @@ network → storage → database → compute → edge → workflow → monitorin
 `analytics` only needs the storage stack (for the bucket name), so it can be
 deployed any time after `storage`. `ai` needs `compute` (it reads the REST API
 id/stage), so deploy it after `compute`. `concierge-chat` needs **both** `ai`
-(harness ARN) and `edge` (CloudFront domain for CORS), so it is deployed last;
-its public endpoint is the `ChatFunctionUrl` output (a Lambda Function URL, not
-API Gateway) and only works once the AiStack harness is deployed and healthy
-(see the AiStack note under [Stacks](#stacks)).
+(harness ARN) and `edge` (CloudFront domain for CORS), so it is deployed last.
+Its public entry point is the async **API Gateway** flow — submit at the
+`ChatSubmitEndpoint` output (`POST /chat` → 202 `{jobId}`) and poll at
+`${ChatApiBaseUrl}chat/{jobId}` (`GET`) until `status: DONE` — not a Lambda
+Function URL (those are blocked by an account guardrail; see the AiStack note
+under [Stacks](#stacks) for the 29s-vs-49s rationale). It only works once the
+AiStack harness is deployed and healthy.
 
 > **API Gateway CloudWatch role (account-level, one-time per region).** The API
 > stage enables access logging, which requires an account-level CloudWatch Logs

@@ -1,15 +1,19 @@
 """
-GEO Demo - On-Site Concierge Chat Endpoint
-===========================================
-Thin, PUBLIC HTTPS endpoint that a browser chat widget calls. It invokes the
-AgentCore MANAGED HARNESS (geo-concierge) server-side and returns the reply.
+GEO Demo - On-Site Concierge Chat WORKER (async request/poll)
+=============================================================
+Long-running worker that invokes the AgentCore MANAGED HARNESS (geo-concierge)
+and writes the result back to the chat jobs DynamoDB table. It is invoked
+ASYNCHRONOUSLY (lambda InvocationType='Event') by the submit endpoint — NOT
+behind API Gateway — because the agent loop runs ~49s, well past the API
+Gateway hard 29s integration timeout (and Lambda Function URLs are blocked by
+an account guardrail). The browser polls `GET /chat/{jobId}` for the result.
 
 Why this exists:
   The browser cannot call the harness directly (no public HTTP interface, and
-  we must never expose AWS credentials client-side). This Lambda is the only
-  public, unauthenticated route in the demo. It is DISTINCT from the IAM-secured
-  data API (api-handler): that one is agent-to-agent (SigV4); this one is
-  browser-to-server for the on-site widget.
+  we must never expose AWS credentials client-side). The submit/worker/poll
+  trio is the only public, unauthenticated route in the demo. It is DISTINCT
+  from the IAM-secured data API (api-handler): that one is agent-to-agent
+  (SigV4); this one is browser-to-server for the on-site widget.
 
 IMPORTANT -- managed harness invoke contract (verified against the AgentCore
 APIReference):
@@ -24,76 +28,52 @@ APIReference):
   * IAM: the execution role needs BOTH bedrock-agentcore:InvokeHarness AND
     bedrock-agentcore:InvokeAgentRuntime on the harness ARN.
 
-Security posture (keep it tight -- this route is public):
-  * CORS locked to the site origin (ALLOWED_ORIGIN env var).
-  * Message length capped; basic input validation.
-  * Intended to sit behind an API Gateway usage plan / throttle.
-  * Stateless single-turn Q&A (200-level). Memory/identity/guardrails are
-    the agentic (Blog 2) layer.
+Worker contract:
+  * Event (direct async invoke): {jobId, message, sessionId}.
+  * On success: UpdateItem {status:'DONE', reply, stopReason, finishedAt}.
+  * On failure: UpdateItem {status:'ERROR', error, finishedAt}.
 
 Env vars:
   HARNESS_ARN       ARN of the geo-concierge harness (arn:...:harness/<name-suffix>).
                     If you only have the runtime ARN, swap `runtime/`->`harness/`.
-  ALLOWED_ORIGIN    Exact browser origin allowed for CORS
-                    (e.g. https://d33b4fqje003hr.cloudfront.net).
-  MAX_MESSAGE_CHARS Optional; default 500.
+  JOBS_TABLE        DynamoDB table name for the chat jobs store.
   HARNESS_QUALIFIER Optional endpoint qualifier; omit for DEFAULT.
 """
-import json
 import os
+import time
 import uuid
 
 import boto3
 
 HARNESS_ARN = os.environ["HARNESS_ARN"]
-ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
-MAX_MESSAGE_CHARS = int(os.environ.get("MAX_MESSAGE_CHARS", "500"))
+JOBS_TABLE = os.environ["JOBS_TABLE"]
 HARNESS_QUALIFIER = os.environ.get("HARNESS_QUALIFIER", "")
 
 # AgentCore data-plane client (invokes the managed harness).
 _agentcore = boto3.client("bedrock-agentcore")
+_table = boto3.resource("dynamodb").Table(JOBS_TABLE)
 
 
-def _cors_headers():
-    return {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Access-Control-Allow-Methods": "POST,OPTIONS",
-    }
+class AgentError(Exception):
+    """Raised when the harness invoke or stream read fails."""
 
 
-def _resp(status, body):
-    return {"statusCode": status, "headers": _cors_headers(), "body": json.dumps(body)}
-
-
-def handler(event, context):
-    # CORS preflight
-    method = (event.get("requestContext", {})
-              .get("http", {}).get("method")) or event.get("httpMethod")
-    if method == "OPTIONS":
-        return _resp(200, {"ok": True})
-
-    # Parse + validate the incoming message
-    try:
-        payload = json.loads(event.get("body") or "{}")
-    except (ValueError, TypeError):
-        return _resp(400, {"error": "invalid_json",
-                           "message": "Request body must be valid JSON."})
-
-    message = (payload.get("message") or "").strip()
-    if not message:
-        return _resp(400, {"error": "empty_message",
-                           "message": "Provide a non-empty 'message'."})
-    if len(message) > MAX_MESSAGE_CHARS:
-        return _resp(400, {"error": "message_too_long",
-                           "message": f"Message exceeds {MAX_MESSAGE_CHARS} characters."})
-
-    # runtimeSessionId must be >= 33 chars (AgentCore requirement). Reuse the
-    # same id across turns to continue a session; here each request is stateless.
-    session_id = payload.get("sessionId") or f"onsite-{uuid.uuid4().hex}-{uuid.uuid4().hex}"
+def _normalize_session_id(session_id):
+    """runtimeSessionId must be >= 33 chars (AgentCore requirement)."""
+    session_id = session_id or f"onsite-{uuid.uuid4().hex}-{uuid.uuid4().hex}"
     if len(session_id) < 33:
         session_id = (session_id + "-" + uuid.uuid4().hex)[:64]
+    return session_id
+
+
+def run_agent(message, session_id):
+    """Invoke the managed harness and accumulate the streamed reply.
+
+    Returns ``(reply_text, stop_reason)``. Raises :class:`AgentError` on any
+    harness/stream failure. This is the proven harness-invoke + stream-read
+    logic, kept intact from the original synchronous endpoint.
+    """
+    session_id = _normalize_session_id(session_id)
 
     # Invoke the MANAGED HARNESS. messages is a Converse-style array.
     kwargs = {
@@ -106,10 +86,8 @@ def handler(event, context):
 
     try:
         resp = _agentcore.invoke_harness(**kwargs)
-    except Exception as exc:  # surface a clean error to the widget
-        return _resp(502, {"error": "agent_invoke_failed",
-                           "message": "The concierge is unavailable right now.",
-                           "detail": str(exc)[:300]})
+    except Exception as exc:
+        raise AgentError(f"agent_invoke_failed: {str(exc)[:300]}") from exc
 
     # Response is an EventStream in resp["stream"]. Accumulate the streamed text
     # from contentBlockDelta events; capture stopReason/errors.
@@ -124,18 +102,51 @@ def handler(event, context):
             elif "messageStop" in ev:
                 stop_reason = ev["messageStop"].get("stopReason")
             elif "validationException" in ev:
-                return _resp(400, {"error": "validation_exception",
-                                   "message": str(ev["validationException"])[:300]})
+                raise AgentError(f"validation_exception: {str(ev['validationException'])[:300]}")
             elif "runtimeClientError" in ev:
-                return _resp(502, {"error": "runtime_client_error",
-                                   "message": str(ev["runtimeClientError"])[:300]})
+                raise AgentError(f"runtime_client_error: {str(ev['runtimeClientError'])[:300]}")
             elif "internalServerException" in ev:
-                return _resp(502, {"error": "internal_server_exception",
-                                   "message": "The concierge hit a transient error. Please retry."})
+                raise AgentError("internal_server_exception: transient error")
+    except AgentError:
+        raise
     except Exception as exc:
-        return _resp(502, {"error": "stream_read_failed",
-                           "message": "Could not read the concierge response.",
-                           "detail": str(exc)[:300]})
+        raise AgentError(f"stream_read_failed: {str(exc)[:300]}") from exc
 
     reply_text = "".join(reply_parts).strip() or "I couldn't find an answer for that just now."
-    return _resp(200, {"reply": reply_text, "sessionId": session_id, "stopReason": stop_reason})
+    return reply_text, stop_reason
+
+
+def handler(event, context):
+    """Async worker entry point. Event: {jobId, message, sessionId}."""
+    job_id = event["jobId"]
+    message = (event.get("message") or "").strip()
+    session_id = event.get("sessionId")
+    now = int(time.time())
+
+    try:
+        reply_text, stop_reason = run_agent(message, session_id)
+    except Exception as exc:
+        _table.update_item(
+            Key={"jobId": job_id},
+            UpdateExpression="SET #s = :s, #e = :e, finishedAt = :f",
+            ExpressionAttributeNames={"#s": "status", "#e": "error"},
+            ExpressionAttributeValues={
+                ":s": "ERROR",
+                ":e": str(exc)[:500],
+                ":f": now,
+            },
+        )
+        return {"jobId": job_id, "status": "ERROR"}
+
+    _table.update_item(
+        Key={"jobId": job_id},
+        UpdateExpression="SET #s = :s, reply = :r, stopReason = :sr, finishedAt = :f",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues={
+            ":s": "DONE",
+            ":r": reply_text,
+            ":sr": stop_reason,
+            ":f": now,
+        },
+    )
+    return {"jobId": job_id, "status": "DONE"}

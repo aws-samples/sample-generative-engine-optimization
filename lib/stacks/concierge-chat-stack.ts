@@ -1,5 +1,7 @@
+import * as path from 'node:path';
 import { CfnOutput, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
@@ -20,18 +22,33 @@ export interface ConciergeChatStackProps extends BaseStackProps {
   readonly harnessArn: string;
   /** The CloudFront distribution domain (host only, from EdgeStack) for the CORS origin. */
   readonly cloudFrontDomainName: string;
-  /** Directory holding the chat Lambda source (`assets/code/chat-endpoint`). */
+  /** Directory holding the chat WORKER Lambda source (`assets/code/chat-endpoint`). */
   readonly chatCodeDir: string;
 }
 
 /**
- * ConciergeChatStack — the on-site concierge chat Lambda + public REST API.
+ * ConciergeChatStack — the on-site concierge chat behind an ASYNC submit/poll
+ * REST API.
  *
- * Deploys the browser-facing chat endpoint (`assets/code/chat-endpoint/`) as a
- * single Python Lambda fronted by an **API Gateway REST API** (`POST /chat`
- * with CORS). The function invokes the AgentCore managed harness server-side
- * and returns the reply. It calls only the AgentCore data plane, so it runs
- * OUTSIDE the VPC with no Aurora / content-bucket access.
+ * The browser-facing chat is served as an ASYNCHRONOUS request/poll flow on a
+ * public **API Gateway REST API** (`${prefix}-concierge-chat-api`):
+ *
+ *   - `POST /chat`         → SUBMIT Lambda: records a PENDING job in DynamoDB,
+ *                            invokes the WORKER asynchronously, returns 202
+ *                            `{jobId}` immediately.
+ *   - WORKER (async only)  → invokes the AgentCore managed harness (the ~49s
+ *                            agent loop) and writes the result back to DynamoDB.
+ *   - `GET /chat/{jobId}`  → POLL Lambda: reads the job and reports
+ *                            PENDING / DONE / ERROR.
+ *
+ * Why async (proven live): the agent loop runs ~49s; API Gateway REST APIs
+ * have a HARD 29s integration timeout, so a synchronous POST always times out
+ * even though the Lambda succeeds. Lambda Function URLs are blocked by an
+ * account guardrail (403 at the edge). The submit/poll split is the way to
+ * expose this harness to the browser.
+ *
+ * All three functions call only the AgentCore data plane + DynamoDB, so they
+ * run OUTSIDE the VPC with no Aurora / content-bucket access.
  *
  * Downstream of both AiStack (harness ARN) and EdgeStack (CloudFront domain for
  * CORS); neither reads anything back from this stack, so there is no dependency
@@ -45,52 +62,94 @@ export class ConciergeChatStack extends Stack {
     const prefix = config.prefix;
     const allowedOrigin = `https://${cloudFrontDomainName}`;
 
-    // Explicit DESTROY log group (unless retainData) so `cdk destroy` removes it
-    // and a later deploy doesn't fail with "log group already exists". Mirrors
-    // the BlogApi `logGroupFor` pattern, gated on retainData per the task.
-    const logGroup = new logs.LogGroup(this, 'ChatLogGroup', {
-      logGroupName: `/aws/lambda/${prefix}-onsite-chat`,
-      retention: logs.RetentionDays.ONE_MONTH,
+    // Submit/poll code dirs are siblings of the worker dir, so bin/app.ts needs
+    // no change (it still passes chatCodeDir = assets/code/chat-endpoint).
+    const submitCodeDir = path.resolve(chatCodeDir, '..', 'chat-submit');
+    const pollCodeDir = path.resolve(chatCodeDir, '..', 'chat-poll');
+
+    // --- Job store ---------------------------------------------------------
+    // Ephemeral request/response scratch: PK jobId, 1h TTL, on-demand billing.
+    // DESTROY unless retainData so teardown is clean (jobs are transient).
+    const jobsTable = new dynamodb.TableV2(this, 'ChatJobsTable', {
+      tableName: `${prefix}-chat-jobs`,
+      partitionKey: { name: 'jobId', type: dynamodb.AttributeType.STRING },
+      timeToLiveAttribute: 'ttl',
+      billing: dynamodb.Billing.onDemand(),
       removalPolicy: config.retainData ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
     });
 
-    // The chat Lambda — python3.13, handler `lambda_function.handler`. No VPC:
-    // it only reaches the AgentCore data plane. MAX_MESSAGE_CHARS and
-    // HARNESS_QUALIFIER are intentionally left unset (defaults apply).
-    const fn = new lambda.Function(this, 'ChatFunction', {
+    // --- WORKER: runs the ~49s agent loop, writes result to DynamoDB -------
+    // Unchanged name `${prefix}-onsite-chat`; keeps its /aws/lambda log group.
+    // Invoked ASYNCHRONOUSLY by the submit function (never behind API Gateway).
+    const worker = new lambda.Function(this, 'ChatFunction', {
       functionName: `${prefix}-onsite-chat`,
       runtime: lambda.Runtime.PYTHON_3_13,
       handler: 'lambda_function.handler',
       code: lambda.Code.fromAsset(chatCodeDir),
       memorySize: 256,
-      // The agent loop (Bedrock reasoning + gateway tool calls) can run well
-      // past 30s. The harness itself allows up to 120s (CfnHarness
-      // timeoutSeconds), so give the Lambda headroom beyond that to receive and
-      // relay the streamed reply. Lambda Function URLs allow up to 15 min.
+      // The agent loop (Bedrock reasoning + gateway tool calls) runs ~49s. Give
+      // the worker headroom beyond the harness's own 120s cap to receive and
+      // relay the streamed reply.
       timeout: Duration.seconds(150),
-      logGroup,
+      logGroup: this.logGroupFor('ChatLogGroup', `${prefix}-onsite-chat`, config.retainData),
       environment: {
         HARNESS_ARN: harnessArn,
-        ALLOWED_ORIGIN: allowedOrigin,
+        JOBS_TABLE: jobsTable.tableName,
       },
     });
 
     // Both actions are required to invoke the managed harness; scoped to the
     // single harness ARN (NOT a wildcard).
-    fn.addToRolePolicy(
+    worker.addToRolePolicy(
       new iam.PolicyStatement({
         sid: 'InvokeConciergeHarness',
         actions: ['bedrock-agentcore:InvokeHarness', 'bedrock-agentcore:InvokeAgentRuntime'],
         resources: [harnessArn],
       }),
     );
+    // Worker writes job results back (UpdateItem on success/failure).
+    jobsTable.grantWriteData(worker);
 
-    // Public REST API: POST /chat (+ CORS preflight). This is the demo's one
-    // public, unauthenticated, browser-to-server route — CORS is locked to the
-    // CloudFront origin and the Lambda self-validates input. API Gateway (rather
-    // than a Lambda Function URL) is used because this account rejects public
-    // Function URLs; the REST API also matches the committed OpenAPI intent.
-    // Access-log group for the API stage (explicit DESTROY so teardown is clean).
+    // --- SUBMIT: records a PENDING job, fires the worker, returns 202 ------
+    const submit = new lambda.Function(this, 'ChatSubmitFunction', {
+      functionName: `${prefix}-chat-submit`,
+      runtime: lambda.Runtime.PYTHON_3_13,
+      handler: 'lambda_function.handler',
+      code: lambda.Code.fromAsset(submitCodeDir),
+      memorySize: 256,
+      timeout: Duration.seconds(10),
+      logGroup: this.logGroupFor('ChatSubmitLogGroup', `${prefix}-chat-submit`, config.retainData),
+      environment: {
+        JOBS_TABLE: jobsTable.tableName,
+        WORKER_FUNCTION_NAME: worker.functionName,
+        ALLOWED_ORIGIN: allowedOrigin,
+      },
+    });
+    jobsTable.grantWriteData(submit);
+    worker.grantInvoke(submit);
+
+    // --- POLL: reads the job, reports PENDING/DONE/ERROR -------------------
+    const poll = new lambda.Function(this, 'ChatPollFunction', {
+      functionName: `${prefix}-chat-poll`,
+      runtime: lambda.Runtime.PYTHON_3_13,
+      handler: 'lambda_function.handler',
+      code: lambda.Code.fromAsset(pollCodeDir),
+      memorySize: 256,
+      timeout: Duration.seconds(10),
+      logGroup: this.logGroupFor('ChatPollLogGroup', `${prefix}-chat-poll`, config.retainData),
+      environment: {
+        JOBS_TABLE: jobsTable.tableName,
+        ALLOWED_ORIGIN: allowedOrigin,
+      },
+    });
+    jobsTable.grantReadData(poll);
+
+    // --- Public REST API: POST /chat (submit) + GET /chat/{jobId} (poll) ---
+    // This is the demo's one public, unauthenticated, browser-to-server route.
+    // CORS is locked to the CloudFront origin and the Lambdas self-validate
+    // input. API Gateway (rather than a Lambda Function URL) is used because
+    // this account rejects public Function URLs; the async submit/poll split
+    // works around API Gateway's hard 29s integration timeout vs the ~49s loop.
     const apiAccessLogs = new logs.LogGroup(this, 'ChatApiAccessLogs', {
       logGroupName: `/${prefix}/concierge-chat/apigw/access`,
       retention: logs.RetentionDays.ONE_MONTH,
@@ -99,7 +158,7 @@ export class ConciergeChatStack extends Stack {
 
     const api = new apigateway.RestApi(this, 'ChatApi', {
       restApiName: `${prefix}-concierge-chat-api`,
-      description: 'Public on-site concierge chat endpoint (POST /chat).',
+      description: 'Public on-site concierge chat endpoint (async POST /chat + GET /chat/{jobId}).',
       deployOptions: {
         stageName: config.compute.apiStageName,
         // Stage logging (addresses APIG1 access logs + APIG6 execution logs).
@@ -111,26 +170,39 @@ export class ConciergeChatStack extends Stack {
       },
       defaultCorsPreflightOptions: {
         allowOrigins: [allowedOrigin],
-        allowMethods: ['POST', 'OPTIONS'],
+        allowMethods: ['POST', 'GET', 'OPTIONS'],
         allowHeaders: ['Content-Type'],
       },
     });
 
     const chat = api.root.addResource('chat');
-    chat.addMethod('POST', new apigateway.LambdaIntegration(fn), {
-      operationName: 'conciergeChat',
-      methodResponses: [{ statusCode: '200' }, { statusCode: '400' }, { statusCode: '502' }],
+    chat.addMethod('POST', new apigateway.LambdaIntegration(submit), {
+      operationName: 'submitChat',
+      methodResponses: [{ statusCode: '202' }, { statusCode: '400' }, { statusCode: '502' }],
     });
 
-    new CfnOutput(this, 'ChatApiEndpoint', {
-      // Full invoke URL for the chat turn, e.g. https://<id>.execute-api.<region>.amazonaws.com/<stage>/chat
+    const job = chat.addResource('{jobId}');
+    job.addMethod('GET', new apigateway.LambdaIntegration(poll), {
+      operationName: 'pollChat',
+      methodResponses: [{ statusCode: '200' }, { statusCode: '400' }, { statusCode: '404' }],
+    });
+
+    new CfnOutput(this, 'ChatSubmitEndpoint', {
+      // Full invoke URL for a chat submit, e.g.
+      // https://<id>.execute-api.<region>.amazonaws.com/<stage>/chat (POST).
       value: `${api.url}chat`,
-      description: 'Public API Gateway URL for the on-site concierge chat (POST /chat)',
-      exportName: `${prefix}-chat-api-endpoint`,
+      description: 'Public API Gateway URL to submit a concierge chat turn (POST /chat -> 202 {jobId})',
+      exportName: `${prefix}-chat-submit-endpoint`,
+    });
+    new CfnOutput(this, 'ChatApiBaseUrl', {
+      // Base stage URL; poll at `${base}chat/{jobId}` (GET).
+      value: api.url,
+      description: 'Base URL of the concierge chat API (poll at chat/{jobId})',
+      exportName: `${prefix}-chat-api-base-url`,
     });
     new CfnOutput(this, 'ChatFunctionName', {
-      value: fn.functionName,
-      description: 'Name of the on-site concierge chat Lambda',
+      value: worker.functionName,
+      description: 'Name of the on-site concierge chat worker Lambda',
       exportName: `${prefix}-chat-function-name`,
     });
 
@@ -146,9 +218,9 @@ export class ConciergeChatStack extends Stack {
       {
         id: 'AwsSolutions-IAM4',
         reason:
-          'The chat Lambda uses the AWS-managed AWSLambdaBasicExecutionRole for ' +
-          'CloudWatch logging (no VPC exec role — this function is outside the ' +
-          'VPC). This matches the standard least-privilege baseline.',
+          'The chat Lambdas use the AWS-managed AWSLambdaBasicExecutionRole for ' +
+          'CloudWatch logging (no VPC exec role — these functions are outside ' +
+          'the VPC). This matches the standard least-privilege baseline.',
         appliesTo: [
           'Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
         ],
@@ -156,10 +228,13 @@ export class ConciergeChatStack extends Stack {
       {
         id: 'AwsSolutions-IAM5',
         reason:
-          'The bedrock-agentcore:InvokeHarness / InvokeAgentRuntime grant is ' +
-          'scoped to exactly one harness ARN (the geo-concierge harness); there ' +
-          'is no narrower resource form. Defensive — the single-ARN grant is ' +
-          'unlikely to trip IAM5.',
+          'Scoped wildcards only: (a) the bedrock-agentcore:InvokeHarness / ' +
+          'InvokeAgentRuntime grant is scoped to exactly one harness ARN; ' +
+          '(b) grantReadData/grantWriteData expand to the single jobs table ' +
+          'plus its CDK-generated `.../index/*` suffix (no indexes are defined); ' +
+          '(c) grantInvoke resolves to the single worker function ARN plus the ' +
+          '`:*` version-qualifier form. All are CDK-generated scoped wildcards ' +
+          'on exactly the jobs table and the one worker function.',
       },
       {
         id: 'AwsSolutions-IAM4',
@@ -175,9 +250,9 @@ export class ConciergeChatStack extends Stack {
       {
         id: 'AwsSolutions-APIG2',
         reason:
-          'Request validation is handled inside the chat Lambda (JSON parse, ' +
-          'non-empty message, length cap); the endpoint is a thin proxy to the ' +
-          'AgentCore harness and does not use model-based request validation.',
+          'Request validation is handled inside the chat Lambdas (JSON parse, ' +
+          'non-empty message, length cap); the endpoints are thin proxies to ' +
+          'the job store / harness and do not use model-based request validation.',
       },
       {
         id: 'AwsSolutions-APIG3',
@@ -190,7 +265,7 @@ export class ConciergeChatStack extends Stack {
         reason:
           'The chat endpoint is intentionally public and unauthenticated — it is ' +
           'the browser-to-server route for the on-site concierge widget. CORS is ' +
-          'locked to the CloudFront origin and the Lambda self-validates input.',
+          'locked to the CloudFront origin and the Lambdas self-validate input.',
       },
       {
         id: 'AwsSolutions-COG4',
@@ -198,6 +273,27 @@ export class ConciergeChatStack extends Stack {
           'No Cognito user pool authorizer: the chat endpoint is intentionally ' +
           'public for the on-site widget, consistent with the data API.',
       },
+      {
+        id: 'AwsSolutions-DDB3',
+        reason:
+          'The chat jobs table is an ephemeral request/response scratch store ' +
+          'with a ~1h TTL; jobs are transient and DESTROY-gated. Point-in-time ' +
+          'recovery is unnecessary for this throwaway data.',
+      },
     ]);
+  }
+
+  /**
+   * Create the CloudWatch log group for a Lambda explicitly, with a DESTROY
+   * removal policy (unless retainData), so `cdk destroy` removes it and a
+   * later `cdk deploy` does not fail with "log group already exists". Mirrors
+   * the BlogApi `logGroupFor` pattern, gated on retainData per the task.
+   */
+  private logGroupFor(id: string, functionName: string, retainData: boolean): logs.LogGroup {
+    return new logs.LogGroup(this, id, {
+      logGroupName: `/aws/lambda/${functionName}`,
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: retainData ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+    });
   }
 }

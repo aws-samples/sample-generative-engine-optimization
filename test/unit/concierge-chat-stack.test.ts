@@ -23,10 +23,40 @@ function synth(context: Record<string, unknown> = {}): Template {
   return Template.fromStack(stack);
 }
 
-describe('ConciergeChatStack (on-site chat Lambda + REST API)', () => {
+describe('ConciergeChatStack (async submit/worker/poll chat API)', () => {
   const template = synth();
 
-  it('creates a python3.13 Lambda with the right handler and env vars', () => {
+  it('creates the DynamoDB jobs table (PK jobId, TTL, PAY_PER_REQUEST)', () => {
+    // TableV2 synthesizes to AWS::DynamoDB::GlobalTable.
+    template.hasResourceProperties('AWS::DynamoDB::GlobalTable', {
+      TableName: 'geo-demo-dev-chat-jobs',
+      BillingMode: 'PAY_PER_REQUEST',
+      KeySchema: Match.arrayWith([
+        Match.objectLike({ AttributeName: 'jobId', KeyType: 'HASH' }),
+      ]),
+      AttributeDefinitions: Match.arrayWith([
+        Match.objectLike({ AttributeName: 'jobId', AttributeType: 'S' }),
+      ]),
+      TimeToLiveSpecification: { AttributeName: 'ttl', Enabled: true },
+    });
+  });
+
+  it('creates the SUBMIT Lambda (python3.13, JOBS_TABLE + WORKER_FUNCTION_NAME env)', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Runtime: 'python3.13',
+      Handler: 'lambda_function.handler',
+      FunctionName: 'geo-demo-dev-chat-submit',
+      Environment: {
+        Variables: Match.objectLike({
+          JOBS_TABLE: Match.anyValue(),
+          WORKER_FUNCTION_NAME: Match.anyValue(),
+          ALLOWED_ORIGIN: ALLOWED_ORIGIN,
+        }),
+      },
+    });
+  });
+
+  it('creates the WORKER Lambda (python3.13, HARNESS_ARN + JOBS_TABLE env)', () => {
     template.hasResourceProperties('AWS::Lambda::Function', {
       Runtime: 'python3.13',
       Handler: 'lambda_function.handler',
@@ -34,33 +64,50 @@ describe('ConciergeChatStack (on-site chat Lambda + REST API)', () => {
       Environment: {
         Variables: Match.objectLike({
           HARNESS_ARN: FAKE_HARNESS_ARN,
+          JOBS_TABLE: Match.anyValue(),
+        }),
+      },
+    });
+  });
+
+  it('creates the POLL Lambda (python3.13, JOBS_TABLE + ALLOWED_ORIGIN env)', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Runtime: 'python3.13',
+      Handler: 'lambda_function.handler',
+      FunctionName: 'geo-demo-dev-chat-poll',
+      Environment: {
+        Variables: Match.objectLike({
+          JOBS_TABLE: Match.anyValue(),
           ALLOWED_ORIGIN: ALLOWED_ORIGIN,
         }),
       },
     });
   });
 
-  it('keeps the function OUTSIDE the VPC', () => {
+  it('keeps all functions OUTSIDE the VPC', () => {
     const fns = template.findResources('AWS::Lambda::Function');
     expect(Object.values(fns).every((f) => !f.Properties?.VpcConfig)).toBe(true);
   });
 
-  it('fronts the function with a public REST API exposing POST /chat', () => {
+  it('fronts the functions with a public REST API (POST /chat + GET /chat/{jobId})', () => {
     template.hasResourceProperties('AWS::ApiGateway::RestApi', {
       Name: 'geo-demo-dev-concierge-chat-api',
     });
-    // POST /chat method on the API
+    // POST /chat (submit) and GET /chat/{jobId} (poll), both unauthenticated.
     template.hasResourceProperties('AWS::ApiGateway::Method', {
       HttpMethod: 'POST',
       AuthorizationType: 'NONE',
     });
-    // A /chat resource
-    template.hasResourceProperties('AWS::ApiGateway::Resource', {
-      PathPart: 'chat',
+    template.hasResourceProperties('AWS::ApiGateway::Method', {
+      HttpMethod: 'GET',
+      AuthorizationType: 'NONE',
     });
+    // A /chat resource and a /{jobId} child resource.
+    template.hasResourceProperties('AWS::ApiGateway::Resource', { PathPart: 'chat' });
+    template.hasResourceProperties('AWS::ApiGateway::Resource', { PathPart: '{jobId}' });
   });
 
-  it('grants both AgentCore invoke actions scoped to the single harness ARN', () => {
+  it('grants the worker both AgentCore invoke actions scoped to the single harness ARN', () => {
     template.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: {
         Statement: Match.arrayWith([
@@ -73,9 +120,54 @@ describe('ConciergeChatStack (on-site chat Lambda + REST API)', () => {
     });
   });
 
-  it('declares an explicit DESTROY log group for clean teardown', () => {
+  it('lets the worker write job results to DynamoDB (UpdateItem/PutItem)', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith(['dynamodb:PutItem', 'dynamodb:UpdateItem']),
+            Effect: 'Allow',
+          }),
+        ]),
+      },
+    });
+  });
+
+  it('lets the submit function invoke the worker (lambda:InvokeFunction)', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'lambda:InvokeFunction',
+            Effect: 'Allow',
+          }),
+        ]),
+      },
+    });
+  });
+
+  it('lets the poll function read the jobs table (dynamodb:GetItem)', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith(['dynamodb:GetItem']),
+            Effect: 'Allow',
+          }),
+        ]),
+      },
+    });
+  });
+
+  it('declares explicit DESTROY log groups incl. the worker group for clean teardown', () => {
     template.hasResourceProperties('AWS::Logs::LogGroup', {
       LogGroupName: '/aws/lambda/geo-demo-dev-onsite-chat',
+    });
+    template.hasResourceProperties('AWS::Logs::LogGroup', {
+      LogGroupName: '/aws/lambda/geo-demo-dev-chat-submit',
+    });
+    template.hasResourceProperties('AWS::Logs::LogGroup', {
+      LogGroupName: '/aws/lambda/geo-demo-dev-chat-poll',
     });
     const groups = template.findResources('AWS::Logs::LogGroup');
     for (const g of Object.values(groups)) {
@@ -83,7 +175,9 @@ describe('ConciergeChatStack (on-site chat Lambda + REST API)', () => {
     }
   });
 
-  it('exports the chat API endpoint', () => {
-    template.hasOutput('ChatApiEndpoint', {});
+  it('exports the async chat endpoints and worker function name', () => {
+    template.hasOutput('ChatSubmitEndpoint', {});
+    template.hasOutput('ChatApiBaseUrl', {});
+    template.hasOutput('ChatFunctionName', {});
   });
 });
