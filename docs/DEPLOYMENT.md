@@ -233,8 +233,11 @@ aws cloudformation describe-stacks `
   --output table
 ```
 **Expect:** every stack is `CREATE_COMPLETE` or `UPDATE_COMPLETE`. If you have
-not deployed `geo-demo-dev-ai` yet (it is optional and the least-exercised
-stack), it simply won't appear in the list — that is fine.
+not deployed `geo-demo-dev-ai` yet (it is the newest, least-exercised stack and
+is deployed late in the order), it simply won't appear in the list — the rest of
+the platform still works. Note that `geo-demo-dev-concierge-chat` depends on
+`ai` (it needs the harness ARN), so the on-site chat only returns real answers
+once `ai` is deployed and healthy.
 
 ### Step 2 — Capture the endpoints from stack outputs
 
@@ -416,7 +419,10 @@ fresh create is destroyed:
   access log group (`/geo-demo-dev/apigw/access`) are declared explicitly with
   `removalPolicy: DESTROY`, so they are removed on teardown. This is deliberate:
   named log groups that survive teardown would cause a later deploy to fail with
-  *"log group already exists"*.
+  *"log group already exists"*. (The `@aws-cdk/aws-lambda:useCdkManagedLogGroup`
+  feature flag in `cdk.json` is also on, but the stacks declare their own log
+  groups explicitly, so teardown removal is governed by the DESTROY policy
+  above.)
 - The **S3 bucket** empties and deletes (`autoDeleteObjects`), and **Aurora** is
   destroyed with no final snapshot.
 
