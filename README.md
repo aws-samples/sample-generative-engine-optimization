@@ -11,9 +11,11 @@ independently.
 > Status: **in progress**. `NetworkStack`, `DatabaseStack`, `StorageStack`,
 > `ComputeStack`, `EdgeStack`, `WorkflowStack` (feedback-loop Step Function),
 > `MonitoringStack` (logging module), and `AnalyticsStack` (Glue + Athena over
-> the CloudFront logs) are implemented; only `AiStack` (Bedrock AgentCore
-> harness) remains as a documented placeholder. Components are fleshed out
-> incrementally.
+> the CloudFront logs) are implemented and verified by unit/synth tests.
+> `AiStack` (Bedrock AgentCore Gateway + managed Harness concierge) and
+> `ConciergeChatStack` (public async submit/poll chat API) build and `cdk synth`
+> clean but are the newest stacks and are not yet verified against a live
+> deploy. Components are fleshed out incrementally.
 
 📚 **Technical documentation** lives in [`docs/`](docs/README.md): architecture,
 deployment, configuration, and security.
@@ -47,10 +49,12 @@ deployment, configuration, and security.
  Worker Lambdas (VPC, ComputeStack): citation-tracker -> Bedrock;
    patch-applier -> staging/;  promoter -> web_application/ + CloudFront invalidation
 
- NetworkStack   : VPC, subnets, 1 NAT, VPC endpoints (incl. RDS Data API), SGs
- MonitoringStack: VPC Flow Logs -> S3 logs/vpc_flow/ (logging module)
- AnalyticsStack : Glue DB + Athena workgroup over S3 logs/cf_logs/
- AiStack        : Bedrock agent (todo)
+ NetworkStack       : VPC, subnets, 1 NAT, VPC endpoints (incl. RDS Data API), SGs
+ WorkflowStack      : GEO feedback-loop Step Function (the 3 worker Lambdas)
+ MonitoringStack    : VPC Flow Logs -> S3 logs/vpc_flow/ (logging module)
+ AnalyticsStack     : Glue DB + Athena workgroup over S3 logs/cf_logs/
+ AiStack            : Bedrock AgentCore Gateway + managed Harness concierge (synth-only)
+ ConciergeChatStack : public async submit/poll chat API -> AgentCore harness (synth-only)
 ```
 
 ### Stacks (`lib/stacks`)
@@ -61,9 +65,10 @@ deployment, configuration, and security.
 | `StorageStack`    | S3                   | ✅ done | Single bucket: web_application/, code/, logs/, staging/ + asset upload |
 | `DatabaseStack`   | Aurora               | ✅ done | Serverless v2 cluster + Secrets Manager creds    |
 | `ComputeStack`    | Lambda + API         | ✅ done | 4 VPC Lambdas + public REST API (Octank Hospitality) |
-| `AiStack`         | Bedrock agent        | ⬜ todo | Generative AI features (agent, KB, action groups)|
+| `AiStack`         | Bedrock AgentCore    | ⚠️ synth-only | AgentCore Gateway + managed Harness concierge (not yet live-verified) |
 | `AnalyticsStack`  | Athena               | ✅ done | Glue DB + EXTERNAL table + Athena workgroup over `logs/cf_logs/` |
 | `EdgeStack`       | CloudFront           | ✅ done | SPA via S3 (OAC) + `/api/*` to API, logs to `logs/cf_logs/` |
+| `ConciergeChatStack` | API GW + Lambda + DynamoDB | ⚠️ synth-only | Public async submit/poll chat API fronting the AgentCore harness |
 | `WorkflowStack`   | Step Functions       | ✅ done | GEO feedback-loop state machine orchestrating the 3 worker Lambdas |
 | `MonitoringStack` | CloudWatch / S3 logs | ✅ done | Logging module: VPC Flow Logs → S3 `logs/vpc_flow/` (alarms/dashboards later) |
 
@@ -254,10 +259,13 @@ MeasureLive (citation-tracker, target=live)
 The state machine's role only gets `lambda:InvokeFunction` on the three workers
 (granted automatically by the `LambdaInvoke` tasks). Execution logging to a
 DESTROY-policy CloudWatch log group + X-Ray tracing are on by default
-(`-c workflowLogging=false` to disable). The `StateMachineArn` is exported. It
-is **not scheduled** — invoke it on demand (the live one had no EventBridge
-rule). The `staging/` prefix it depends on is seeded with a `.keep` marker by
-the StorageStack so it always exists.
+(`-c workflowLogging=false` to disable). The `StateMachineArn` is exported. By
+default it is triggered **weekly** by an EventBridge Scheduler schedule
+(`${prefix}-feedback-loop-weekly`, `rate(7 days)`, `America/Chicago`, mirroring
+the live schedule); you can still start it on demand. Disable the schedule with
+`-c workflowSchedule=false`, or retune it with `-c workflowScheduleExpression=…`
+and `-c workflowScheduleTimezone=…`. The `staging/` prefix it depends on is
+seeded with a `.keep` marker by the StorageStack so it always exists.
 
 ### Logging / observability (implemented)
 
@@ -316,7 +324,7 @@ and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for a sample verification query.
 ```
 bin/app.ts            CDK app entry point — instantiates + wires all stacks
 lib/config/           Central config: defaults + CDK-context overrides + validation
-lib/stacks/           One stack per component (7 of 8 implemented; ai todo)
+lib/stacks/           One stack per component (ten stacks; ai + concierge-chat synth-only)
 lib/constructs/       Reusable L3 constructs, one per component
 assets/               Content uploaded to S3: web_application/, code/ (Lambdas), db/ (DDL+seed)
 test/unit/            Jest synthesis tests (fast, no AWS calls)
@@ -395,6 +403,9 @@ Account/region resolve from the CDK CLI environment or the
 | `apiPathPattern`        | `/api/*` | string           | Path routed to the API origin                   |
 | `flowLogTrafficType`    | `ALL`  | ALL / ACCEPT / REJECT | VPC Flow Log traffic captured to S3          |
 | `workflowLogging`       | `true` | true/false         | Enable Step Function execution logging + tracing |
+| `workflowSchedule`      | `true` | true/false         | Create the weekly EventBridge Scheduler trigger  |
+| `workflowScheduleExpression` | `rate(7 days)` | string   | Schedule expression (EventBridge Scheduler syntax) |
+| `workflowScheduleTimezone`   | `America/Chicago` | string | Timezone the schedule is evaluated in           |
 | `analyticsDatabaseName` | `geo_demo_dev_logs` | string | Glue database for the CloudFront log table |
 | `analyticsTableName`    | `cloudfront_logs` | string   | Glue EXTERNAL table over `logs/cf_logs/`       |
 | `analyticsWorkgroupName`| `geo-demo-dev-analytics` | string | Athena workgroup name                   |
@@ -424,8 +435,12 @@ before deploying.
 
 ## Next steps
 
-Flesh out each remaining stack/construct pair in dependency order:
-~~Network~~ → ~~Storage~~ → ~~Database~~ → ~~Compute~~ → Ai → ~~Analytics~~ → ~~Edge~~ → ~~Monitoring~~.
+Verify the two synth-only stacks against a live deploy, in dependency order:
+~~Network~~ → ~~Storage~~ → ~~Database~~ → ~~Compute~~ → Ai → ~~Analytics~~ →
+~~Edge~~ → ConciergeChat → ~~Workflow~~ → ~~Monitoring~~. `AiStack` and
+`ConciergeChatStack` synthesize cleanly but their AgentCore / async-chat
+resources have not been exercised live yet (see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
 Add resource assertions to a dedicated unit test per stack (see
 `test/unit/network-stack.test.ts` as the template) and live checks to the
 integration suite as you go.

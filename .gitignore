@@ -24,3 +24,10 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea
+# Python
+__pycache__/
+*.pyc
+# Tooling / scan artifacts (not source)
+output/
+.protoshield/
+.agents/

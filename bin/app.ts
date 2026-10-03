@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+/*
+ * Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import 'source-map-support/register.js';
 import * as path from 'node:path';
 import { App, Aspects, Tags } from 'aws-cdk-lib';
@@ -96,10 +101,14 @@ const edge = new EdgeStack(app, `${prefix}-edge`, {
   apiStageName: compute.apiStageName,
 });
 
-// ConciergeChatStack — the public on-site chat Lambda + Function URL. It sits
-// strictly downstream of both ai (harness ARN) and edge (CloudFront domain for
-// the CORS origin). Reading `ai.harnessArn` and `edge.domainName` makes those
-// dependencies implicit; neither reads back from this stack, so no cycle.
+// ConciergeChatStack — the public on-site chat behind an async submit/poll
+// API Gateway REST API (POST /chat -> 202 {jobId}; GET /chat/{jobId}), backed
+// by a worker Lambda + DynamoDB job store. (Lambda Function URLs are blocked by
+// an account guardrail, and the ~49s agent loop exceeds API Gateway's 29s
+// integration timeout, hence the async split.) It sits strictly downstream of
+// both ai (harness ARN) and edge (CloudFront domain for the CORS origin).
+// Reading `ai.harnessArn` and `edge.domainName` makes those dependencies
+// implicit; neither reads back from this stack, so no cycle.
 new ConciergeChatStack(app, `${prefix}-concierge-chat`, {
   ...baseProps,
   harnessArn: ai.harnessArn,

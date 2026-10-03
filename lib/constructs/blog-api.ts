@@ -1,5 +1,10 @@
+/*
+ * Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import * as path from 'node:path';
-import { Duration, RemovalPolicy } from 'aws-cdk-lib';
+import { Aws, Duration, RemovalPolicy } from 'aws-cdk-lib';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -190,7 +195,12 @@ export class BlogApi extends Construct {
         new iam.PolicyStatement({
           sid: 'InvalidateDistribution',
           actions: ['cloudfront:CreateInvalidation'],
-          resources: ['*'],
+          // Scoped to exactly the one distribution the promoter invalidates
+          // (the id is known here, passed via context). CloudFront ARNs are
+          // partition/account-global with no region segment.
+          resources: [
+            `arn:${Aws.PARTITION}:cloudfront::${Aws.ACCOUNT_ID}:distribution/${distributionId}`,
+          ],
         }),
       );
     }

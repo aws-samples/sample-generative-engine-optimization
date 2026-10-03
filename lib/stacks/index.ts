@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 export * from './stack-props.js';
 export * from './network-stack.js';
 export * from './storage-stack.js';

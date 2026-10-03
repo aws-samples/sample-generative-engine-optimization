@@ -1,3 +1,6 @@
+# Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """geo db-loader — CloudFormation custom resource that loads the SQL schema+data
 into Aurora via the RDS Data API.
 
@@ -20,10 +23,14 @@ Environment variables:
   SQL_KEY         S3 key of the SQL script (e.g. code/db/geo_demo_full.sql)
 """
 import json
+import logging
 import os
 import urllib.request
 
 import boto3
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 s3 = boto3.client("s3")
 rds_data = boto3.client("rds-data")
@@ -145,8 +152,10 @@ def _run(statements):
             rds_data.rollback_transaction(
                 resourceArn=DB_CLUSTER_ARN, secretArn=DB_SECRET_ARN, transactionId=tx
             )
-        except Exception:
-            pass
+        except Exception as rollback_exc:  # noqa: BLE001
+            # Don't mask the original failure, but surface the rollback problem
+            # (e.g. the transaction already timed out) so it's debuggable.
+            logger.warning("Rollback after load failure also failed: %s", rollback_exc)
         raise
     return executed
 
@@ -163,10 +172,17 @@ def _send(event, context, status, data, physical_id, reason=None):
             "Data": data,
         }
     ).encode("utf-8")
+    response_url = event["ResponseURL"]
+    # Defense-in-depth: the ResponseURL comes from the CloudFormation-generated
+    # event and is always an HTTPS S3 pre-signed URL. Reject anything that is
+    # not https:// so a malformed/tampered event can never make urlopen touch a
+    # file:// or other-scheme target (the risk S310 flags).
+    if not response_url.lower().startswith("https://"):
+        raise ValueError("ResponseURL must be an https:// CloudFormation pre-signed URL")
     req = urllib.request.Request(
-        event["ResponseURL"], data=body, method="PUT", headers={"content-type": ""}
+        response_url, data=body, method="PUT", headers={"content-type": ""}
     )
-    urllib.request.urlopen(req)  # noqa: S310 (CFN pre-signed URL)
+    urllib.request.urlopen(req)  # noqa: S310 (validated https CFN pre-signed URL)
 
 
 def lambda_handler(event, context):

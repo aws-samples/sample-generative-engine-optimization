@@ -1,3 +1,6 @@
+# Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """
 GEO Demo API Handler
 ====================
@@ -66,7 +69,18 @@ def _param(name, value):
 
 
 def search_properties(qs):
-    """GET /properties — filter by city, pets, maxRate, amenity."""
+    """GET /properties — filter by city, pets, maxRate, amenity.
+
+    SQL-injection safety: every element appended to ``where`` is a hard-coded
+    string literal defined in this function — never a value taken from the
+    request. All user-supplied values (e.g. ``city``) are passed as RDS Data API
+    *bound parameters* via ``_param()`` and only referenced by placeholder
+    (``:city``) inside those literals. The f-string therefore only interpolates
+    developer-controlled fragments, so the ``' AND '.join(where)`` is not an
+    injection vector.
+    """
+    # Static WHERE fragments only — do NOT append request-derived strings here;
+    # bind user values as parameters (see _param) instead.
     where = ["p.property_status = 'active'"]
     params = []
     if qs.get("city"):
@@ -83,7 +97,7 @@ def search_properties(qs):
         WHERE {' AND '.join(where)}
         ORDER BY p.star_rating DESC
         LIMIT 25
-    """
+    """  # nosec B608 — join operands are static literals, not user input (see docstring)
     rows = _q(sql, params)
     return _resp(200, {"count": len(rows), "properties": rows})
 

@@ -5,31 +5,49 @@ How to build, deploy, operate, and tear down the Octank Hospitality CDK app.
 ## Prerequisites
 
 - **Node.js 20+** (developed on 24).
-- **AWS credentials** for the target account. Verify:
+
+- **Set your target environment once.** Every command below reads these
+  variables instead of hard-coded values, so the same instructions work for any
+  account, region, and profile — set them once per shell session and reuse them
+  everywhere. (`AWS_PROFILE` and `AWS_REGION` are read automatically by both the
+  AWS CLI and the CDK CLI; `CDK_DEPLOY_ACCOUNT` / `CDK_DEPLOY_REGION` are what
+  this app's `lib/config` reads to resolve `env`.)
+
+  PowerShell (adjust the three values to your own account/region/profile):
+  ```powershell
+  $env:AWS_PROFILE        = "GEO_BLOG"        # named profile to use
+  $env:AWS_REGION         = "us-east-1"       # target region
+  $env:CDK_DEPLOY_REGION  = $env:AWS_REGION
+  $env:CDK_DEPLOY_ACCOUNT = "501683248676"    # target account id
+  ```
+
+  bash/zsh (same values):
   ```bash
+  export AWS_PROFILE=GEO_BLOG
+  export AWS_REGION=us-east-1
+  export CDK_DEPLOY_REGION=$AWS_REGION
+  export CDK_DEPLOY_ACCOUNT=501683248676
+  ```
+
+  > If you omit `CDK_DEPLOY_REGION`, the config falls back to
+  > `CDK_DEFAULT_REGION` and then `us-east-1`; the account falls back to
+  > `CDK_DEFAULT_ACCOUNT`. Setting the variables above makes the target explicit.
+
+- **AWS credentials** for the target account. Because `AWS_PROFILE` /
+  `AWS_REGION` are set above, the CLI and CDK pick them up automatically — no
+  `--profile` / `--region` flags are needed on the commands below. Verify you
+  are pointed at the right account:
+  ```powershell
   aws sts get-caller-identity
   ```
-  If you use a named profile (e.g. the demo account uses `GEO_BLOG`):
-  ```bash
-  aws sts get-caller-identity --profile GEO_BLOG
-  export AWS_PROFILE=GEO_BLOG   # or pass --profile per command
-  ```
-- **Target account + region.** The config resolves the region from
-  `CDK_DEPLOY_REGION` / `CDK_DEFAULT_REGION` (falling back to `us-east-1`) and
-  the account from `CDK_DEPLOY_ACCOUNT` / `CDK_DEFAULT_ACCOUNT`. To deploy to a
-  specific account/region, set these before any CDK command. Example
-  (PowerShell, deploying to `501683248676` / `ca-central-1` via the `GEO_BLOG`
-  profile):
-  ```powershell
-  $env:AWS_PROFILE        = "GEO_BLOG"
-  $env:CDK_DEPLOY_ACCOUNT = "501683248676"
-  $env:CDK_DEPLOY_REGION  = "ca-central-1"
-  $env:AWS_REGION         = "ca-central-1"
-  aws sts get-caller-identity --profile GEO_BLOG   # confirm the right account
-  ```
+  The returned `Account` should equal `$env:CDK_DEPLOY_ACCOUNT`.
+
 - **CDK bootstrap** in the target account/region (one-time):
+  ```powershell
+  npx cdk bootstrap "aws://$env:CDK_DEPLOY_ACCOUNT/$env:AWS_REGION"
+  ```
   ```bash
-  npx cdk bootstrap aws://501683248676/ca-central-1 --profile GEO_BLOG
+  npx cdk bootstrap "aws://$CDK_DEPLOY_ACCOUNT/$AWS_REGION"
   ```
 - Install dependencies:
   ```bash
@@ -69,8 +87,7 @@ geo-demo-dev-ai           geo-demo-dev-concierge-chat
 (via a CloudFormation export of the bucket name), so it deploys after
 `geo-demo-dev-storage`. `ai` (the AgentCore Gateway + managed Harness concierge)
 reads the REST API id/stage from `compute`, so it deploys **after**
-`geo-demo-dev-compute` — see the [AiStack handoff](HANDOFF-cdk-aistack-concierge.md)
-for its design, console-resource mapping, and post-deploy validation.
+`geo-demo-dev-compute`.
 `concierge-chat` deploys **after both** `ai` (it needs the harness ARN as
 `HARNESS_ARN`) and `edge` (it needs the CloudFront domain to build the CORS
 `ALLOWED_ORIGIN`), so it is the last stack in order; no stack reads back from
@@ -86,7 +103,7 @@ it, so there is no dependency cycle.
 >
 > - `POST /chat` returns **202** `{jobId, status:"PENDING"}` immediately (the
 >   `ChatSubmitEndpoint` output);
-> - a background **worker** Lambda (`geo-onsite-chat`, from
+> - a background **worker** Lambda (`geo-demo-dev-onsite-chat`, from
 >   `assets/code/chat-endpoint/`) runs the agent and records the result;
 > - the browser polls `GET /chat/{jobId}` (base URL is the `ChatApiBaseUrl`
 >   output) until `status` is `DONE` (`{reply, stopReason}`) or `ERROR`.
@@ -114,17 +131,21 @@ Or deploy a single stack at a time (recommended for the first deploy so you can
 watch each one). `--require-approval never` skips the IAM/security-group prompts:
 
 ```powershell
-npx cdk deploy geo-demo-dev-network    --profile GEO_BLOG --require-approval never 2>&1
-npx cdk deploy geo-demo-dev-storage    --profile GEO_BLOG --require-approval never 2>&1
-npx cdk deploy geo-demo-dev-database   --profile GEO_BLOG --require-approval never 2>&1
-npx cdk deploy geo-demo-dev-compute    --profile GEO_BLOG --require-approval never 2>&1
-npx cdk deploy geo-demo-dev-edge       --profile GEO_BLOG --require-approval never 2>&1
-npx cdk deploy geo-demo-dev-workflow   --profile GEO_BLOG --require-approval never 2>&1
-npx cdk deploy geo-demo-dev-monitoring --profile GEO_BLOG --require-approval never 2>&1
-npx cdk deploy geo-demo-dev-analytics  --profile GEO_BLOG --require-approval never 2>&1
-npx cdk deploy geo-demo-dev-ai         --profile GEO_BLOG --require-approval never 2>&1
-npx cdk deploy geo-demo-dev-concierge-chat --profile GEO_BLOG --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-network    --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-storage    --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-database   --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-compute    --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-edge       --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-workflow   --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-monitoring --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-analytics  --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-ai         --require-approval never 2>&1
+npx cdk deploy geo-demo-dev-concierge-chat --require-approval never 2>&1
 ```
+
+> The profile and region come from `$env:AWS_PROFILE` / `$env:AWS_REGION` set in
+> Prerequisites, so no `--profile` / `--region` flags are needed. Pass them
+> explicitly only if you want to override the environment for a single command.
 
 Recommended first-deploy order (matches dependencies):
 
@@ -172,11 +193,11 @@ it back into Compute directly would create a dependency cycle). So:
    ```powershell
    $distId = aws cloudformation describe-stacks --stack-name geo-demo-dev-edge `
      --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" `
-     --output text --profile GEO_BLOG --region ca-central-1
+     --output text
    ```
 3. Re-deploy Compute with the id via context:
    ```powershell
-   npx cdk deploy geo-demo-dev-compute --profile GEO_BLOG --require-approval never -c distributionId=$distId 2>&1
+   npx cdk deploy geo-demo-dev-compute --require-approval never -c distributionId=$distId 2>&1
    ```
 
 ## Overriding configuration at deploy time
@@ -196,8 +217,10 @@ See [CONFIGURATION.md](CONFIGURATION.md) for the complete key reference.
 
 ## Verifying a deployment
 
-Work through these steps in order. Commands are PowerShell; they use the
-`GEO_BLOG` profile and `ca-central-1` region (adjust if you deployed elsewhere).
+Work through these steps in order. Commands are PowerShell and rely on the
+`AWS_PROFILE` / `AWS_REGION` environment variables set in
+[Prerequisites](#prerequisites), so they carry no `--profile` / `--region`
+flags — they run against whatever account/region/profile you configured there.
 
 > On Windows PowerShell, `curl` is an alias for `Invoke-WebRequest` (noisy
 > output). Use **`curl.exe`** below for the real curl with clean output.
@@ -205,7 +228,7 @@ Work through these steps in order. Commands are PowerShell; they use the
 ### Step 1 — Confirm all stacks are healthy
 
 ```powershell
-aws cloudformation describe-stacks --profile GEO_BLOG --region ca-central-1 `
+aws cloudformation describe-stacks `
   --query "Stacks[?starts_with(StackName,'geo-demo-dev')].[StackName,StackStatus]" `
   --output table
 ```
@@ -218,15 +241,15 @@ stack), it simply won't appear in the list — that is fine.
 ```powershell
 $api = aws cloudformation describe-stacks --stack-name geo-demo-dev-compute `
   --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" `
-  --output text --profile GEO_BLOG --region ca-central-1
+  --output text
 
 $cf = "https://" + (aws cloudformation describe-stacks --stack-name geo-demo-dev-edge `
   --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue" `
-  --output text --profile GEO_BLOG --region ca-central-1)
+  --output text)
 
 $sm = aws cloudformation describe-stacks --stack-name geo-demo-dev-workflow `
   --query "Stacks[0].Outputs[?OutputKey=='StateMachineArn'].OutputValue" `
-  --output text --profile GEO_BLOG --region ca-central-1
+  --output text
 
 "API : $api"; "CF  : $cf"; "SM  : $sm"
 ```
@@ -274,14 +297,14 @@ This proves the whole path: CloudFront → API Gateway → VPC Lambda → RDS Da
 ```powershell
 # Start an execution
 $exec = aws stepfunctions start-execution --state-machine-arn $sm --input "{}" `
-  --query "executionArn" --output text --profile GEO_BLOG --region ca-central-1
+  --query "executionArn" --output text
 
 # Poll status (repeat until SUCCEEDED; citation-tracker calls Bedrock, ~1-3 min)
 aws stepfunctions describe-execution --execution-arn $exec `
-  --query "status" --output text --profile GEO_BLOG --region ca-central-1
+  --query "status" --output text
 ```
 **Expect:** status goes `RUNNING` → `SUCCEEDED`. Or watch it visually in the
-**Step Functions console** (ca-central-1) → `geo-demo-dev-feedback-loop` →
+**Step Functions console** (your `$env:AWS_REGION`) → `geo-demo-dev-feedback-loop` →
 Executions → the graph lights up MeasureLive → HasGap → … . The loop is
 stage-only: a validated candidate (if any) is left under `staging/`.
 
@@ -291,12 +314,11 @@ stage-only: a validated candidate (if any) is left under `staging/`.
 # Bucket layout — should list web_application/ code/ logs/ staging/
 $bucket = aws cloudformation describe-stacks --stack-name geo-demo-dev-storage `
   --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" `
-  --output text --profile GEO_BLOG --region ca-central-1
-aws s3 ls "s3://$bucket/" --profile GEO_BLOG --region ca-central-1
+  --output text
+aws s3 ls "s3://$bucket/"
 
 # Recent API-handler logs
-aws logs tail /aws/lambda/geo-demo-dev-api-handler --since 15m `
-  --profile GEO_BLOG --region ca-central-1
+aws logs tail /aws/lambda/geo-demo-dev-api-handler --since 15m
 ```
 
 ### Step 7 — Verify analytics (Athena over the CloudFront logs)
@@ -309,13 +331,13 @@ Start the query (the workgroup already sets the output location, so **no**
 `--result-configuration` flag is needed):
 
 ```powershell
-aws athena start-query-execution --query-string "SELECT count(*) AS row_count FROM cloudfront_logs" --work-group "geo-demo-dev-analytics" --query-execution-context "Database=geo_demo_dev_logs" --profile GEO_BLOG --region ca-central-1
+aws athena start-query-execution --query-string "SELECT count(*) AS row_count FROM cloudfront_logs" --work-group "geo-demo-dev-analytics" --query-execution-context "Database=geo_demo_dev_logs"
 ```
 
 That returns a `QueryExecutionId`. Fetch the results with it:
 
 ```powershell
-aws athena get-query-results --query-execution-id <QueryExecutionId> --profile GEO_BLOG --region ca-central-1
+aws athena get-query-results --query-execution-id <QueryExecutionId>
 ```
 
 **Expect:** a single `row_count` value of about **4959** — the rows across the
@@ -323,7 +345,7 @@ aws athena get-query-results --query-execution-id <QueryExecutionId> --profile G
 `logs/cf_logs/` prefix, so the count grows over time). Query results land under
 `logs/athena_logs/` in the content bucket.
 
-You can also browse results in the **Athena console** (ca-central-1): select the
+You can also browse results in the **Athena console** (your `$env:AWS_REGION`): select the
 `geo-demo-dev-analytics` workgroup and the `geo_demo_dev_logs` database, then run
 the same query from the editor.
 
@@ -339,7 +361,7 @@ npm run test:integ
 
 To do steps 3–4 in one go:
 ```powershell
-$cf = "https://" + (aws cloudformation describe-stacks --stack-name geo-demo-dev-edge --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue" --output text --profile GEO_BLOG --region ca-central-1)
+$cf = "https://" + (aws cloudformation describe-stacks --stack-name geo-demo-dev-edge --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue" --output text)
 foreach ($p in "/","/llms.txt","/api/properties","/api/properties/13/availability") {
   $code = curl.exe -o NUL -s -w "%{http_code}" "$cf$p"
   "{0,-40} {1}" -f $p, $code
@@ -368,7 +390,7 @@ Because cross-stack references use **strong** strength, destroy in reverse
 dependency order (or use `--all`, which handles ordering):
 
 ```powershell
-npx cdk destroy --all --profile GEO_BLOG 2>&1
+npx cdk destroy --all 2>&1
 ```
 
 Teardown behavior is governed by `retainData` (default `false` for dev):
@@ -382,7 +404,7 @@ Teardown behavior is governed by `retainData` (default `false` for dev):
 
 ```powershell
 # Destroy but keep data (prod-like)
-npx cdk destroy --all --profile GEO_BLOG -c retainData=true 2>&1
+npx cdk destroy --all -c retainData=true 2>&1
 ```
 
 ### Does destroy fully clean up so I can reinstall?
@@ -406,15 +428,15 @@ So `cdk destroy --all` followed by a fresh `cdk deploy` is clean.
 > create. This is a one-time cleanup, not a normal-teardown issue:
 > ```powershell
 > foreach ($fn in "api-handler","citation-tracker","patch-applier","promoter","db-loader") {
->   aws logs delete-log-group --log-group-name "/aws/lambda/geo-demo-dev-$fn" --profile GEO_BLOG --region ca-central-1 2>$null
+>   aws logs delete-log-group --log-group-name "/aws/lambda/geo-demo-dev-$fn" 2>$null
 > }
-> aws logs delete-log-group --log-group-name "/geo-demo-dev/apigw/access" --profile GEO_BLOG --region ca-central-1 2>$null
+> aws logs delete-log-group --log-group-name "/geo-demo-dev/apigw/access" 2>$null
 > ```
 > A CloudFormation rollback runs **server-side** — cancelling the terminal
 > command does not stop it. VPC-attached Lambda deletion waits on ENI cleanup and
 > can take 15–20 minutes; that is normal, not a hang. If a stack lands in
 > `ROLLBACK_COMPLETE` (a create that never succeeded), delete it before
-> redeploying: `npx cdk destroy geo-demo-dev-compute --profile GEO_BLOG`.
+> redeploying: `npx cdk destroy geo-demo-dev-compute`.
 
 If a destroy fails because a bucket is non-empty, confirm `retainData` is
 `false` (which sets `autoDeleteObjects`) and retry.

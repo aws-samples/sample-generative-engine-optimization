@@ -23,6 +23,11 @@ the [project README](../README.md) for a high-level overview, then dive in:
 
 ## Status
 
-Six of eight stacks are implemented: Network, Storage, Database, Compute, Edge,
-and Monitoring (logging module). `AiStack` (Bedrock agent) and `AnalyticsStack`
-(Athena) remain as documented placeholders.
+All ten stacks are wired in `bin/app.ts`: Network, Storage, Database, Compute,
+Ai, Analytics, Edge, ConciergeChat, Workflow, and Monitoring (logging module).
+Network, Storage, Database, Compute, Edge, Workflow, Monitoring, and Analytics
+are implemented and verified by unit/synth tests. `AiStack` (AgentCore Gateway +
+managed Harness concierge) and `ConciergeChatStack` (async submit/poll chat API)
+build and `cdk synth` clean but are the newest, least-exercised stacks and have
+not yet been verified against a live deploy — see
+[DEPLOYMENT.md](DEPLOYMENT.md).

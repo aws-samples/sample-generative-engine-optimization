@@ -1,4 +1,9 @@
-import { CfnOutput, Stack } from 'aws-cdk-lib';
+/*
+ * Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { Aws, CfnOutput, Stack } from 'aws-cdk-lib';
 import * as agentcore from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { NagSuppressions } from 'cdk-nag';
@@ -107,10 +112,28 @@ export class AiStack extends Stack {
         resources: [gateway.attrGatewayArn],
       }),
     );
+    // InvokeAgentRuntime is scoped to agent-runtime resources in THIS account
+    // and region (removing cross-account/cross-region exposure). The managed
+    // harness's own runtime ARN is service-assigned and not known at synth, so
+    // the runtime-id segment stays a wildcard. GetWorkloadAccessToken is a
+    // workload-identity token action that takes NO resource ARN (AWS's own
+    // BedrockAgentCoreRuntimeServiceRolePolicy grants it on `*`), so it is
+    // split into its own `*` statement and documented in the nag suppression.
     harnessRole.addToPolicy(
       new iam.PolicyStatement({
         sid: 'AgentCoreRuntime',
-        actions: ['bedrock-agentcore:InvokeAgentRuntime', 'bedrock-agentcore:GetWorkloadAccessToken'],
+        actions: ['bedrock-agentcore:InvokeAgentRuntime'],
+        resources: [
+          `arn:${Aws.PARTITION}:bedrock-agentcore:${Aws.REGION}:${Aws.ACCOUNT_ID}:runtime/*`,
+        ],
+      }),
+    );
+    harnessRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'AgentCoreWorkloadToken',
+        actions: ['bedrock-agentcore:GetWorkloadAccessToken'],
+        // No resource-level ARN form exists for this workload-identity token
+        // action; it must be granted on `*`. See the IAM5 suppression below.
         resources: ['*'],
       }),
     );
@@ -201,9 +224,15 @@ export class AiStack extends Stack {
         reason:
           'Harness role is scoped to the Claude model family plus the global ' +
           'inference-profile ARN (required for Sonnet invocation); the gateway role ' +
-          'is scoped to execute-api:Invoke on exactly the project REST API stage. ' +
-          'The remaining wildcards are the model-family / method-path segments, ' +
-          'which have no narrower resource form.',
+          'is scoped to execute-api:Invoke on exactly the project REST API stage; ' +
+          'InvokeAgentRuntime is scoped to this account+region agent-runtime ' +
+          'namespace (runtime/*, since the managed harness runtime id is ' +
+          'service-assigned and unknown at synth). The remaining wildcards are the ' +
+          'model-family / method-path / runtime-id segments, which have no narrower ' +
+          'resource form. bedrock-agentcore:GetWorkloadAccessToken is a workload-' +
+          'identity token action with NO resource-level ARN form (AWS\'s own ' +
+          'BedrockAgentCoreRuntimeServiceRolePolicy grants it on `*`), so it is ' +
+          'granted on `*` by necessity.',
       },
     ]);
   }
