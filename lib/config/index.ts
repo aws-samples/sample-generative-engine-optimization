@@ -148,6 +148,18 @@ export interface MonitoringConfig {
 export interface WorkflowConfig {
   /** Enable CloudWatch logging for the state machine executions. */
   readonly enableLogging: boolean;
+  /**
+   * Enable the EventBridge Scheduler schedule that triggers the feedback-loop
+   * state machine on a recurring cadence.
+   */
+  readonly enableSchedule: boolean;
+  /**
+   * Schedule expression for the recurring trigger (EventBridge Scheduler
+   * syntax, e.g. `rate(7 days)` or `cron(...)`).
+   */
+  readonly scheduleExpression: string;
+  /** IANA timezone the schedule expression is evaluated in (e.g. America/Chicago). */
+  readonly scheduleTimezone: string;
 }
 
 /**
@@ -274,6 +286,10 @@ export const MONITORING_DEFAULTS: MonitoringConfig = {
 /** Centralized workflow defaults. Override via context. */
 export const WORKFLOW_DEFAULTS: WorkflowConfig = {
   enableLogging: true,
+  // Mirrors the live geo-feedback-loop-weekly schedule in us-east-1.
+  enableSchedule: true,
+  scheduleExpression: 'rate(7 days)',
+  scheduleTimezone: 'America/Chicago',
 };
 
 /**
@@ -633,6 +649,9 @@ function resolveMonitoring(source?: ContextSource): MonitoringConfig {
  *
  * Supported context keys (all optional):
  *   -c workflowLogging=false
+ *   -c workflowSchedule=false
+ *   -c workflowScheduleExpression="cron(0 12 ? * MON *)"
+ *   -c workflowScheduleTimezone=UTC
  */
 function resolveWorkflow(source?: ContextSource): WorkflowConfig {
   return {
@@ -640,6 +659,17 @@ function resolveWorkflow(source?: ContextSource): WorkflowConfig {
       readContext(source, 'workflowLogging'),
       WORKFLOW_DEFAULTS.enableLogging,
       'workflowLogging',
+    ),
+    enableSchedule: boolOverride(
+      readContext(source, 'workflowSchedule'),
+      WORKFLOW_DEFAULTS.enableSchedule,
+      'workflowSchedule',
+    ),
+    scheduleExpression: String(
+      readContext(source, 'workflowScheduleExpression') ?? WORKFLOW_DEFAULTS.scheduleExpression,
+    ),
+    scheduleTimezone: String(
+      readContext(source, 'workflowScheduleTimezone') ?? WORKFLOW_DEFAULTS.scheduleTimezone,
     ),
   };
 }
