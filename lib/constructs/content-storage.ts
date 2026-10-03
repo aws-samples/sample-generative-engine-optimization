@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { Aws, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';

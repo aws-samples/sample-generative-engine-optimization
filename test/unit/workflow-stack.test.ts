@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { App } from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { getConfig, type AppConfig } from '../../lib/config/index.js';
@@ -77,11 +82,28 @@ describe('WorkflowStack (feedback-loop Step Function)', () => {
   it('exports the state machine ARN', () => {
     template.hasOutput('StateMachineArn', {});
   });
+
+  it('schedules the state machine weekly via EventBridge Scheduler', () => {
+    template.resourceCountIs('AWS::Scheduler::Schedule', 1);
+    template.hasResourceProperties('AWS::Scheduler::Schedule', {
+      Name: 'geo-demo-dev-feedback-loop-weekly',
+      ScheduleExpression: 'rate(7 days)',
+      ScheduleExpressionTimezone: 'America/Chicago',
+      State: 'ENABLED',
+      FlexibleTimeWindow: Match.objectLike({ Mode: 'FLEXIBLE' }),
+      Target: Match.objectLike({ Input: '{}' }),
+    });
+  });
 });
 
 describe('WorkflowStack honors context overrides', () => {
   it('omits logging when workflowLogging=false', () => {
     const t = synth({ workflowLogging: false });
     t.resourceCountIs('AWS::Logs::LogGroup', 0);
+  });
+
+  it('omits the schedule when workflowSchedule=false', () => {
+    const t = synth({ workflowSchedule: false });
+    t.resourceCountIs('AWS::Scheduler::Schedule', 0);
   });
 });

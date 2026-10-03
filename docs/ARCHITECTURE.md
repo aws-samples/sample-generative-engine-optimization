@@ -45,10 +45,12 @@ matching reusable L3 construct from `lib/constructs`.
      promoter λ ────────── staging/ ─► web_application/ + CloudFront invalidation
 
    Cross-cutting:
-     NetworkStack    — VPC, subnets, 1 NAT, VPC endpoints (incl. RDS Data API), SGs
-     MonitoringStack — VPC Flow Logs → S3 logs/vpc_flow/ (logging module)
-     AnalyticsStack  — Glue catalog + Athena workgroup over S3 CloudFront logs
-     AiStack         — Bedrock agent (todo)
+     NetworkStack       — VPC, subnets, 1 NAT, VPC endpoints (incl. RDS Data API), SGs
+     WorkflowStack      — GEO feedback-loop Step Function (the 3 worker Lambdas)
+     MonitoringStack    — VPC Flow Logs → S3 logs/vpc_flow/ (logging module)
+     AnalyticsStack     — Glue catalog + Athena workgroup over S3 CloudFront logs
+     AiStack            — Bedrock AgentCore Gateway + managed Harness concierge (synth-only)
+     ConciergeChatStack — public async submit/poll chat API → AgentCore harness (synth-only)
 ```
 
 ## Stacks
@@ -63,7 +65,8 @@ matching reusable L3 construct from `lib/constructs`.
 | `WorkflowStack`   | `BlogWorkflow`       | GEO feedback-loop Step Function (3 worker Lambdas)     |
 | `MonitoringStack` | `BlogObservability`  | Logging module (VPC Flow Logs → S3)                    |
 | `AnalyticsStack`  | (L1 resources)       | Glue catalog + Athena workgroup over CloudFront logs   |
-| `AiStack`         | `BlogBedrockAgent`   | Bedrock agent (placeholder)                            |
+| `AiStack`         | (L1 resources)       | Bedrock AgentCore Gateway + managed Harness concierge (synth-only) |
+| `ConciergeChatStack` | (inline)          | Public async submit/poll chat API + DynamoDB job store (synth-only) |
 
 > Naming note: the construct classes still carry the `Blog*` prefix from the
 > original project name. This is deliberate — a broad rename was deferred to
@@ -219,6 +222,37 @@ live distribution delivers to the same prefix. All names
 (`databaseName` / `tableName` / `workgroupName`) are config values with
 `geo-demo-dev` defaults — see [CONFIGURATION.md](CONFIGURATION.md).
 
+### AiStack (Bedrock AgentCore) — synth-only
+
+Builds the "Be Called" concierge from L1 AgentCore resources: a **Gateway** +
+**GatewayTarget** that expose the ComputeStack REST API as MCP tools, and a
+**managed Harness** (+ HarnessEndpoint) that runs the agent loop. It reads the
+REST API id/stage from the ComputeStack (making the dependency implicit) and
+exports the **harness ARN** consumed by the ConciergeChatStack. The stack builds
+and `cdk synth`s clean but its AgentCore resources are **not yet verified against
+a live deploy** — treat it as the newest, least-exercised stack (see
+[DEPLOYMENT.md](DEPLOYMENT.md)).
+
+### ConciergeChatStack — synth-only
+
+The public on-site chat, exposed as an **async submit/poll API Gateway REST API**
+(`${prefix}-concierge-chat-api`) backed by three Lambdas and a DynamoDB job
+store:
+
+- `POST /chat` → **submit** Lambda: records a PENDING job, invokes the worker
+  asynchronously, returns **202** `{jobId}` immediately.
+- **worker** Lambda (`geo-demo-dev-onsite-chat`): runs the ~49s AgentCore harness
+  loop and writes the result back to DynamoDB.
+- `GET /chat/{jobId}` → **poll** Lambda: reports `PENDING` / `DONE` / `ERROR`.
+
+Why async: the agent loop runs ~49s but API Gateway REST APIs have a hard **29s**
+integration timeout, and Lambda Function URLs are blocked by an account
+guardrail — so neither a synchronous POST nor a Function URL can expose the
+harness to the browser. CORS is locked to the CloudFront origin (from the
+EdgeStack domain), and the stack reads the harness ARN from the AiStack. All
+three functions run outside the VPC. It only returns real answers once the
+AiStack harness is deployed and healthy.
+
 ## Request flow: an AI engine querying hotel availability
 
 1. The AI engine fetches the SPA / manifest (`llms.txt`, `openapi.json`) from
@@ -283,16 +317,23 @@ NetworkStack  StorageStack
      │             │
      ├──────┬──────┤
      ▼      ▼      ▼
- DatabaseStack   (Storage feeds Compute/Edge/Monitoring)
+ DatabaseStack   (Storage feeds Compute/Edge/Monitoring/Analytics)
      │
      ▼
- ComputeStack ──► EdgeStack
-     │                │
+ ComputeStack ──┬──► EdgeStack ───────────┐
+     │          │        │                │
+     │          └──► AiStack ──► ConciergeChatStack
+     │          │       (reads Compute's      (reads Ai's harness ARN
+     │          │        restApiId/stage)      + Edge's CF domain)
+     ├──► WorkflowStack (the 3 Compute worker Lambdas)
      └──► MonitoringStack (Network + Storage)
 
  AnalyticsStack: depends on Storage (bucket name only) — deploys after Storage
- AiStack: independent placeholder (depends on Storage)
 ```
+
+Full first-deploy order (also in [DEPLOYMENT.md](DEPLOYMENT.md)):
+`network → storage → database → compute → edge → workflow → monitoring →
+analytics → ai → concierge-chat`.
 
 ## Technology choices
 

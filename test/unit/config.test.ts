@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { App } from 'aws-cdk-lib';
 import { getConfig, NETWORK_DEFAULTS } from '../../lib/config/index.js';
 

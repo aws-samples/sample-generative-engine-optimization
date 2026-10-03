@@ -1,0 +1,16 @@
+# Checkov configuration for the Octank Hospitality GEO demo.
+#
+# The three OpenAPI documents in this repo describe an API that is
+# INTENTIONALLY PUBLIC AND UNAUTHENTICATED. External AI engines (ChatGPT,
+# Perplexity, etc.) must be able to call it without credentials — that is a core
+# design requirement of a Generative Engine Optimization demo, the same decision
+# documented by the cdk-nag AwsSolutions-APIG4 / COG4 suppressions and in
+# docs/SECURITY.md ("Known trade-offs"). Declaring an authentication scheme in
+# these specs would misrepresent the deployed API to the agents that consume it.
+#
+# We therefore skip the OpenAPI authentication checks (not the array-bound
+# check CKV_OPENAPI_21, which is fixed in the spec). Revisit if a non-public
+# auth layer (API key / usage plan / WAF) is added before production.
+skip-check:
+  - CKV_OPENAPI_4  # global security scheme — API is intentionally public (see above)
+  - CKV_OPENAPI_5  # per-operation security — API is intentionally public (see above)

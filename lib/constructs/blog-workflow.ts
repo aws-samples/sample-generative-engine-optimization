@@ -1,6 +1,13 @@
-import { Duration, RemovalPolicy } from 'aws-cdk-lib';
+/*
+ * Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { Duration, RemovalPolicy, TimeZone } from 'aws-cdk-lib';
 import type * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as scheduler from 'aws-cdk-lib/aws-scheduler';
+import * as schedulerTargets from 'aws-cdk-lib/aws-scheduler-targets';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import { Construct } from 'constructs';
@@ -151,5 +158,28 @@ export class BlogWorkflow extends Construct {
           }
         : {}),
     });
+
+    // EventBridge Scheduler trigger — mirrors the live `geo-feedback-loop-weekly`
+    // schedule (rate(7 days), America/Chicago, 5-min flexible window, empty
+    // input, 0 retries). The L2 StepFunctionsStartExecution target auto-creates
+    // the scheduler execution role with a scoped states:StartExecution grant on
+    // this state machine (equivalent to the live geo-scheduler-role). Gated on
+    // config so it can be disabled per-deploy.
+    if (workflow.enableSchedule) {
+      new scheduler.Schedule(this, 'FeedbackLoopSchedule', {
+        scheduleName: `${prefix}-feedback-loop-weekly`,
+        description: 'Recurring trigger for the GEO feedback-loop state machine.',
+        schedule: scheduler.ScheduleExpression.expression(
+          workflow.scheduleExpression,
+          TimeZone.of(workflow.scheduleTimezone),
+        ),
+        timeWindow: scheduler.TimeWindow.flexible(Duration.minutes(5)),
+        target: new schedulerTargets.StepFunctionsStartExecution(this.stateMachine, {
+          input: scheduler.ScheduleTargetInput.fromText('{}'),
+          maxEventAge: Duration.hours(24),
+          retryAttempts: 0,
+        }),
+      });
+    }
   }
 }

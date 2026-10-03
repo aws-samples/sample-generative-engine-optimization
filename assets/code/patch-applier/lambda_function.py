@@ -1,3 +1,6 @@
+# Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """
 GEO Patch Applier Lambda Function
 =================================
@@ -60,6 +63,19 @@ def _ensure_price_range(ld, _):
     ld["priceRange"] = "$120 - $260"  # demo default; real impl would pull from rates table
     return True
 
+# ============================================================================
+# CUSTOMIZE FOR YOUR ENVIRONMENT -- the fix catalog
+# ----------------------------------------------------------------------------
+# DEMO behavior: a DETERMINISTIC table mapping a gap tag to a specific JSON-LD
+# mutation on a LodgingBusiness (hotel) schema. Deliberately a lookup table (no
+# LLM) to keep this 200-level and reproducible: the same gap -> the same patch.
+#
+# WHAT TO CHANGE: this is YOUR content model. Replace these hotel-amenity
+# handlers with the attributes that matter for your entity type (e.g.
+# SoftwareApplication, MedicalClinic, Product). Keep the tags in sync with the
+# citation-tracker's _FIX_KEYWORDS. The Blog 2 agentic version replaces this
+# table with an agent that reasons about the missing content.
+# ============================================================================
 FIX_MAP = {
     # gap tag           -> (handler, argument)
     "pet_policy":        (_set_pets_allowed, None),

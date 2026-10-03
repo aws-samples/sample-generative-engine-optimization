@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 /** @type {import('ts-jest').JestConfigWithTsJest} */
 
 // The source uses NodeNext module resolution, so relative imports carry a `.js`
@@ -29,7 +34,9 @@ module.exports = {
       transform: tsJestTransform,
       moduleNameMapper,
       // Integration tests hit real AWS APIs; give them room to run.
-      testTimeout: 300000,
+      // `testTimeout` is a global-only Jest option (not valid per-project), so
+      // it is applied inside the integration suite via setupFilesAfterEnv.
+      setupFilesAfterEnv: ['<rootDir>/test/integration/jest.setup.ts'],
     },
   ],
 };

@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { App } from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { getConfig, type AppConfig } from '../../lib/config/index.js';
@@ -69,5 +74,26 @@ describe('AnalyticsStack (Glue + Athena)', () => {
       .ResultConfiguration.OutputLocation as { 'Fn::Join': [string, unknown[]] };
     const parts = outputLocation['Fn::Join'][1];
     expect(parts[parts.length - 1]).toBe('/logs/athena_logs/');
+  });
+
+  it('saves the four AI-crawler detection queries as named queries', () => {
+    template.resourceCountIs('AWS::Athena::NamedQuery', 4);
+    for (const name of [
+      'geo-demo-dev-ai-crawler-daily-summary',
+      'geo-demo-dev-ai-crawler-top-pages',
+      'geo-demo-dev-ai-crawler-discoverability-gap',
+      'geo-demo-dev-ai-crawler-weekly-trend',
+    ]) {
+      template.hasResourceProperties('AWS::Athena::NamedQuery', {
+        Name: name,
+        Database: 'geo_demo_dev_logs',
+        WorkGroup: 'geo-demo-dev-analytics',
+      });
+    }
+    // The queries target the cloudfront_logs table and detect known AI bots.
+    const queries = template.findResources('AWS::Athena::NamedQuery');
+    for (const q of Object.values(queries)) {
+      expect(q.Properties.QueryString).toContain('cloudfront_logs');
+    }
   });
 });

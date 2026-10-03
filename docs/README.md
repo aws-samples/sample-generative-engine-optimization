@@ -9,6 +9,7 @@ the [project README](../README.md) for a high-level overview, then dive in:
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Prerequisites, bootstrap, build/test/synth, deploy order, the two-phase `distributionId` step, verification, log locations, teardown, and troubleshooting. |
 | [CONFIGURATION.md](CONFIGURATION.md) | Complete config reference — every context key, default, and validation rule; how resolution and overrides work; storage prefixes. |
 | [SECURITY.md](SECURITY.md) | Network isolation, per-Lambda IAM least-privilege, encryption, secrets, the cdk-nag baseline with every suppression justified, and prototype trade-offs. |
+| [ADAPTING.md](ADAPTING.md) | What you keep vs. what you adapt for your own business — the exact code slots to change (`_FIX_KEYWORDS`, page resolution, `FIX_MAP`, prompts), config-only knobs, and notes on the sample data. |
 
 ## Quick links
 
@@ -22,6 +23,11 @@ the [project README](../README.md) for a high-level overview, then dive in:
 
 ## Status
 
-Six of eight stacks are implemented: Network, Storage, Database, Compute, Edge,
-and Monitoring (logging module). `AiStack` (Bedrock agent) and `AnalyticsStack`
-(Athena) remain as documented placeholders.
+All ten stacks are wired in `bin/app.ts`: Network, Storage, Database, Compute,
+Ai, Analytics, Edge, ConciergeChat, Workflow, and Monitoring (logging module).
+Network, Storage, Database, Compute, Edge, Workflow, Monitoring, and Analytics
+are implemented and verified by unit/synth tests. `AiStack` (AgentCore Gateway +
+managed Harness concierge) and `ConciergeChatStack` (async submit/poll chat API)
+build and `cdk synth` clean but are the newest, least-exercised stacks and have
+not yet been verified against a live deploy — see
+[DEPLOYMENT.md](DEPLOYMENT.md).

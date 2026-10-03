@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { CfnOutput, Stack } from 'aws-cdk-lib';
 import type * as ec2 from 'aws-cdk-lib/aws-ec2';
 import type * as lambda from 'aws-cdk-lib/aws-lambda';
@@ -86,8 +91,9 @@ export class ComputeStack extends Stack {
         id: 'AwsSolutions-IAM5',
         reason:
           'Scoped wildcards: Bedrock model-family ARNs, PutMetricData (namespace-' +
-          'conditioned), CloudFront CreateInvalidation, and prefix-scoped S3 grants ' +
-          'required by the worker functions.',
+          'conditioned), and prefix-scoped S3 grants required by the worker ' +
+          'functions. (CloudFront CreateInvalidation is now scoped to the specific ' +
+          'distribution ARN, no longer a wildcard.)',
       },
       {
         id: 'AwsSolutions-APIG2',
@@ -129,6 +135,11 @@ export class ComputeStack extends Stack {
   /** API Gateway stage name (used as the CloudFront API origin path). */
   public get apiStageName(): string {
     return this.blogApi.api.deploymentStage.stageName;
+  }
+
+  /** REST API id (for the AgentCore Gateway target in the AiStack). */
+  public get restApiId(): string {
+    return this.blogApi.api.restApiId;
   }
 
   /** The citation-tracker Lambda (for the WorkflowStack). */

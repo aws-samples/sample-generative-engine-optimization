@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+/*
+ * Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import 'source-map-support/register.js';
 import * as path from 'node:path';
 import { App, Aspects, Tags } from 'aws-cdk-lib';
@@ -14,6 +19,7 @@ import {
   EdgeStack,
   MonitoringStack,
   WorkflowStack,
+  ConciergeChatStack,
 } from '../lib/stacks/index.js';
 
 const app = new App();
@@ -47,11 +53,6 @@ const database = new DatabaseStack(app, `${prefix}-database`, {
 // Note: dependencies on network + storage are implicit — passing vpc/SG and the
 // bucket name above already makes CDK order these stacks correctly.
 
-const ai = new AiStack(app, `${prefix}-ai`, baseProps);
-// AiStack is a placeholder with no output reference yet, so express the
-// dependency explicitly to keep deploy ordering sensible.
-ai.addStackDependency(storage);
-
 const compute = new ComputeStack(app, `${prefix}-compute`, {
   ...baseProps,
   vpc: network.vpc,
@@ -69,6 +70,15 @@ const compute = new ComputeStack(app, `${prefix}-compute`, {
 // Dependencies on network + database + storage are implicit via the references
 // passed above (vpc, clusterArn, secret, bucket).
 
+// AiStack fronts the ComputeStack's REST API as MCP tools, so it must be
+// created after compute. Passing restApiId/apiStageName makes the dependency
+// on compute implicit — no explicit addStackDependency needed.
+const ai = new AiStack(app, `${prefix}-ai`, {
+  ...baseProps,
+  restApiId: compute.restApiId,
+  apiStageName: compute.apiStageName,
+});
+
 const analytics = new AnalyticsStack(app, `${prefix}-analytics`, {
   ...baseProps,
   // Pass the bucket NAME (used only to build Glue/Athena S3 location strings)
@@ -82,13 +92,28 @@ analytics.addStackDependency(storage);
 // These stacks are instantiated for their side effect (registration with the
 // app); their dependencies are implicit via the references passed in, so no
 // local variable is kept.
-new EdgeStack(app, `${prefix}-edge`, {
+const edge = new EdgeStack(app, `${prefix}-edge`, {
   ...baseProps,
   // Pass the bucket NAME (imported read-only in EdgeStack) rather than the live
   // construct, to avoid a Storage<->Edge dependency cycle from the OAC policy.
   contentBucketName: storage.bucket.bucketName,
   apiOriginDomain: compute.apiOriginDomain,
   apiStageName: compute.apiStageName,
+});
+
+// ConciergeChatStack — the public on-site chat behind an async submit/poll
+// API Gateway REST API (POST /chat -> 202 {jobId}; GET /chat/{jobId}), backed
+// by a worker Lambda + DynamoDB job store. (Lambda Function URLs are blocked by
+// an account guardrail, and the ~49s agent loop exceeds API Gateway's 29s
+// integration timeout, hence the async split.) It sits strictly downstream of
+// both ai (harness ARN) and edge (CloudFront domain for the CORS origin).
+// Reading `ai.harnessArn` and `edge.domainName` makes those dependencies
+// implicit; neither reads back from this stack, so no cycle.
+new ConciergeChatStack(app, `${prefix}-concierge-chat`, {
+  ...baseProps,
+  harnessArn: ai.harnessArn,
+  cloudFrontDomainName: edge.domainName,
+  chatCodeDir: path.join(assetsDir, 'code', 'chat-endpoint'),
 });
 
 new WorkflowStack(app, `${prefix}-workflow`, {

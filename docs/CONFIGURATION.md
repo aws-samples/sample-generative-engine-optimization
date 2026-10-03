@@ -108,6 +108,20 @@ Additional (not in a `*_DEFAULTS` object; runtime input):
 | -------------------- | ------- | ---------------------- | ---------------------------------- |
 | `flowLogTrafficType` | `ALL`   | `ALL`/`ACCEPT`/`REJECT` | VPC Flow Log traffic captured to S3 |
 
+### Workflow (`WORKFLOW_DEFAULTS`)
+
+Settings for the GEO feedback-loop Step Function (WorkflowStack). Note the
+context keys are **not** the config field names: the resolver reads
+`workflowLogging` / `workflowSchedule` / `workflowScheduleExpression` /
+`workflowScheduleTimezone`.
+
+| Key                         | Default            | Validation | Meaning                                                   |
+| --------------------------- | ------------------ | ---------- | --------------------------------------------------------- |
+| `workflowLogging`           | `true`             | true/false | CloudWatch execution logging + X-Ray tracing for the state machine |
+| `workflowSchedule`          | `true`             | true/false | Create the EventBridge Scheduler schedule that triggers the loop |
+| `workflowScheduleExpression`| `rate(7 days)`     | string     | Schedule expression (EventBridge Scheduler syntax)         |
+| `workflowScheduleTimezone`  | `America/Chicago`  | string     | IANA timezone the schedule expression is evaluated in      |
+
 ### Analytics (`ANALYTICS_DEFAULTS`)
 
 Names for the Glue catalog + Athena workgroup the AnalyticsStack creates over
