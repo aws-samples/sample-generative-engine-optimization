@@ -39,9 +39,20 @@ const assetsDir = path.resolve(process.cwd(), 'assets');
 // Dependencies are expressed by passing outputs between stacks as each one is
 // fleshed out. For now they are independent placeholders.
 
+// CloudFront distribution id, supplied via context after the first deploy
+// (`-c distributionId=...`). Shared by the stacks that auto-invalidate the edge
+// cache (StorageStack SPA upload) or invalidate on demand (the promoter in
+// ComputeStack). Absent on the first deploy, when EdgeStack doesn't yet exist.
+const distributionIdFromContext = app.node.tryGetContext('distributionId') as string | undefined;
+
 const network = new NetworkStack(app, `${prefix}-network`, baseProps);
 
-const storage = new StorageStack(app, `${prefix}-storage`, { ...baseProps, assetsDir });
+const storage = new StorageStack(app, `${prefix}-storage`, {
+  ...baseProps,
+  assetsDir,
+  // Enables SPA edge-cache auto-invalidation once the id is known (2nd deploy+).
+  distributionId: distributionIdFromContext,
+});
 
 const database = new DatabaseStack(app, `${prefix}-database`, {
   ...baseProps,
@@ -65,7 +76,7 @@ const compute = new ComputeStack(app, `${prefix}-compute`, {
   // and the promoter needs Edge's distribution id). After the first deploy,
   // pass the EdgeStack's DistributionId output back in:
   //   -c distributionId=E2HKAT79V522DO
-  distributionId: app.node.tryGetContext('distributionId') as string | undefined,
+  distributionId: distributionIdFromContext,
 });
 // Dependencies on network + database + storage are implicit via the references
 // passed above (vpc, clusterArn, secret, bucket).
@@ -114,6 +125,12 @@ new ConciergeChatStack(app, `${prefix}-concierge-chat`, {
   harnessArn: ai.harnessArn,
   cloudFrontDomainName: edge.domainName,
   chatCodeDir: path.join(assetsDir, 'code', 'chat-endpoint'),
+  // The bucket NAME (string) lets this stack write the widget's runtime
+  // chat-config.json into web_application/ without a Storage<->Chat cycle.
+  contentBucketName: storage.bucket.bucketName,
+  // Distribution id (EdgeStack is already upstream via domainName) so the
+  // config write auto-invalidates /chat-config.json at the edge.
+  distributionId: edge.distributionId,
 });
 
 new WorkflowStack(app, `${prefix}-workflow`, {

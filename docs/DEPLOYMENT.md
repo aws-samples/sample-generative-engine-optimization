@@ -181,23 +181,42 @@ AiStack harness is deployed and healthy.
 > failed/interrupted load can be retried by re-deploying. `storage` must be
 > deployed before `database` (the loader reads the SQL from the bucket).
 
-### Two-phase step: CloudFront distribution id for the promoter
+### Two-phase step: CloudFront distribution id (`-c distributionId=...`)
 
-The `promoter` Lambda invalidates the CloudFront distribution, but the
-distribution id isn't known until the EdgeStack is first deployed (and passing
-it back into Compute directly would create a dependency cycle). So:
+The distribution id isn't known until the EdgeStack is first deployed, and
+passing it back into the earlier stacks directly would create a dependency
+cycle. So it is supplied **via context** on a later deploy, where it now serves
+**two** purposes:
 
-1. Deploy normally. On the first pass the promoter has no `DISTRIBUTION_ID` and
-   simply skips invalidation.
+- **Promoter invalidation (ComputeStack):** the `promoter` Lambda receives it as
+  `DISTRIBUTION_ID` and invalidates the distribution when it promotes content.
+- **SPA edge-cache auto-invalidation (StorageStack):** the `web_application`
+  upload invalidates `/*` at the edge after it syncs, so a redeployed SPA (e.g.
+  an updated `index.html`) is served immediately — no manual
+  `create-invalidation` needed. (The `ConciergeChatStack` config write already
+  auto-invalidates `/chat-config.json` without context, since EdgeStack is its
+  upstream dependency.)
+
+Steps:
+
+1. Deploy normally. On the first pass there is no id yet: the promoter skips
+   invalidation and the SPA upload does not invalidate.
 2. Read the EdgeStack output `DistributionId`:
    ```powershell
    $distId = aws cloudformation describe-stacks --stack-name geo-demo-dev-edge `
      --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" `
      --output text
    ```
-3. Re-deploy Compute with the id via context:
+3. Re-deploy with the id via context. Because the value flows into both Compute
+   (promoter) and Storage (SPA upload), deploy both (CDK touches only what
+   changed):
    ```powershell
-   npx cdk deploy geo-demo-dev-compute --require-approval never -c distributionId=$distId 2>&1
+   npx cdk deploy geo-demo-dev-compute geo-demo-dev-storage --require-approval never -c distributionId=$distId 2>&1
+   ```
+   Or pass it on a full `--all` deploy so every subsequent content change
+   self-invalidates:
+   ```powershell
+   npx cdk deploy --all --require-approval never -c distributionId=$distId 2>&1
    ```
 
 ## Overriding configuration at deploy time
@@ -454,6 +473,7 @@ If a destroy fails because a bucket is non-empty, confirm `retainData` is
 | `synth` fails in `--strict` with an `AwsSolutions-*` ERROR | A new cdk-nag finding. Fix the resource or add a documented `NagSuppressions` entry. See [SECURITY.md](SECURITY.md). |
 | `DependencyCycle` at synth | A cross-stack reference points both ways. See the "Cross-stack references" section in [ARCHITECTURE.md](ARCHITECTURE.md); pass a name/id instead of a live construct. |
 | Promoter isn't invalidating CloudFront | `distributionId` not supplied. Re-deploy Compute with `-c distributionId=...` (two-phase step above). |
+| CloudFront still serves the old SPA after a redeploy | The `web_application` upload only auto-invalidates when `distributionId` is supplied. Re-deploy `geo-demo-dev-storage` with `-c distributionId=...` (two-phase step above). Without it, invalidate once manually: `aws cloudfront create-invalidation --distribution-id <id> --paths "/*"`. |
 | `api-handler` can't reach Aurora | Confirm the `rds-data` VPC interface endpoint exists (NetworkStack) and the cluster has the Data API enabled (DatabaseStack). |
 | Stage fails: *"CloudWatch Logs role ARN must be set in account settings"* | The account-level API Gateway CloudWatch role is missing. The ComputeStack creates it (`cloudWatchRole: true`); ensure `@aws-cdk/aws-apigateway:disableCloudWatchRole` is `false` in `cdk.json`. |
 | `Resource ... 'AWS::Logs::LogGroup' ... already exists` | A named log group orphaned by a prior failed deploy. Delete it (see the one-time cleanup under Teardown) and redeploy. Current code declares these with `removalPolicy: DESTROY`, so normal teardown avoids this. |

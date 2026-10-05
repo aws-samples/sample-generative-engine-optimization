@@ -6,6 +6,7 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { Aws, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
@@ -29,6 +30,14 @@ export interface ContentStorageProps {
    * subdirectories exist, CDK uploads them into the bucket at deploy time.
    */
   readonly assetsDir?: string;
+  /**
+   * CloudFront distribution id (supplied via context, like the promoter's).
+   * When set, the web_application upload auto-invalidates the SPA paths at the
+   * edge so content changes are served immediately — no manual invalidation.
+   * Absent on the first deploy (EdgeStack doesn't exist yet); pass it on a
+   * later deploy with `-c distributionId=...` to enable auto-invalidation.
+   */
+  readonly distributionId?: string;
 }
 
 /**
@@ -61,7 +70,7 @@ export class ContentStorage extends Construct {
   constructor(scope: Construct, id: string, props: ContentStorageProps) {
     super(scope, id);
 
-    const { prefix, storage, retainData, assetsDir } = props;
+    const { prefix, storage, retainData, assetsDir, distributionId } = props;
     const { account, region } = Stack.of(this);
 
     this.bucket = new s3.Bucket(this, 'Bucket', {
@@ -138,7 +147,25 @@ export class ContentStorage extends Construct {
 
     // --- Upload source assets (content, code, DB schema) -------------------
     if (assetsDir) {
-      this.deployAsset('WebAppDeployment', assetsDir, 'web_application', STORAGE_PREFIXES.webApplication);
+      // The SPA upload auto-invalidates the edge cache when a distribution id
+      // is available (passed via context, like the promoter's). This is the
+      // served content, so stale edge copies would otherwise linger after a
+      // redeploy. Other prefixes (code/, db/, logs/, staging/) are never served
+      // through CloudFront, so they need no invalidation.
+      const webAppDistribution = distributionId
+        ? cloudfront.Distribution.fromDistributionAttributes(this, 'EdgeDistribution', {
+            distributionId,
+            // domainName is required by the import API but unused for invalidation.
+            domainName: `${distributionId}.cloudfront.net`,
+          })
+        : undefined;
+      this.deployAsset(
+        'WebAppDeployment',
+        assetsDir,
+        'web_application',
+        STORAGE_PREFIXES.webApplication,
+        webAppDistribution,
+      );
       this.deployAsset('CodeDeployment', assetsDir, 'code', STORAGE_PREFIXES.code);
       // DDL + seed schema live under code/db/ so Lambdas/loaders can fetch them.
       this.deployAsset('DbSchemaDeployment', assetsDir, 'db', `${STORAGE_PREFIXES.code}db/`);
@@ -156,8 +183,18 @@ export class ContentStorage extends Construct {
    * Deploy one asset subdirectory into the bucket under a destination prefix,
    * but only if the source directory actually exists (so partially-populated
    * asset trees don't break synth).
+   *
+   * When `distribution` is provided, the upload also invalidates the served
+   * SPA paths (`/*`) at the CloudFront edge so content changes appear
+   * immediately after a deploy.
    */
-  private deployAsset(id: string, assetsDir: string, subDir: string, destPrefix: string): void {
+  private deployAsset(
+    id: string,
+    assetsDir: string,
+    subDir: string,
+    destPrefix: string,
+    distribution?: cloudfront.IDistribution,
+  ): void {
     const sourcePath = path.join(assetsDir, subDir);
     if (!fs.existsSync(sourcePath)) return;
 
@@ -168,6 +205,9 @@ export class ContentStorage extends Construct {
       // Only manage keys under this prefix; never wipe sibling prefixes.
       prune: false,
       retainOnDelete: false,
+      // Served content only: invalidate all public SPA paths when a
+      // distribution is supplied (origin path /web_application maps to `/*`).
+      ...(distribution ? { distribution, distributionPaths: ['/*'] } : {}),
     });
   }
 

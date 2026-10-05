@@ -166,4 +166,36 @@ describe('StorageStack uploads source assets when assetsDir is provided', () => 
     // web_application, code, db, staging, and logs/cf_logs -> 5 BucketDeployment resources.
     template.resourceCountIs('Custom::CDKBucketDeployment', 5);
   });
+
+  it('does NOT invalidate CloudFront when no distributionId is supplied', () => {
+    const app = new App();
+    const config: AppConfig = { ...getConfig(app), env: TEST_ENV };
+    const stack = new StorageStack(app, 'test-storage-noinval', {
+      env: config.env,
+      config,
+      assetsDir,
+    });
+    const template = Template.fromStack(stack);
+    const deployments = template.findResources('Custom::CDKBucketDeployment');
+    for (const d of Object.values(deployments)) {
+      expect(d.Properties?.DistributionId).toBeUndefined();
+    }
+  });
+
+  it('auto-invalidates the SPA (/*) when a distributionId is supplied', () => {
+    const app = new App();
+    const config: AppConfig = { ...getConfig(app), env: TEST_ENV };
+    const stack = new StorageStack(app, 'test-storage-inval', {
+      env: config.env,
+      config,
+      assetsDir,
+      distributionId: 'E1234567890ABC',
+    });
+    const template = Template.fromStack(stack);
+    // Exactly one deployment (the web_application upload) carries invalidation.
+    template.hasResourceProperties('Custom::CDKBucketDeployment', {
+      DistributionId: 'E1234567890ABC',
+      DistributionPaths: ['/*'],
+    });
+  });
 });

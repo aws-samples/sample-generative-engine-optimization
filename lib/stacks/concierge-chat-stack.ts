@@ -9,9 +9,13 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import { NagSuppressions } from 'cdk-nag';
 import type { Construct } from 'constructs';
+import { STORAGE_PREFIXES } from '../config/index.js';
 import type { BaseStackProps } from './stack-props.js';
 
 /**
@@ -29,6 +33,21 @@ export interface ConciergeChatStackProps extends BaseStackProps {
   readonly cloudFrontDomainName: string;
   /** Directory holding the chat WORKER Lambda source (`assets/code/chat-endpoint`). */
   readonly chatCodeDir: string;
+  /**
+   * Name of the content S3 bucket (from StorageStack). Passed as a plain string
+   * (not a live construct) per the repo's cycle-avoidance convention. Used to
+   * write the widget's runtime `chat-config.json` into `web_application/`, so
+   * the served SPA learns this stack's chat API URL without baking an
+   * environment-specific value into the asset at author time.
+   */
+  readonly contentBucketName: string;
+  /**
+   * CloudFront distribution id (from EdgeStack). When set, the config
+   * deployment invalidates `/chat-config.json` at the edge so the updated value
+   * is served immediately. Passed as a plain string (EdgeStack is already an
+   * upstream dependency via `cloudFrontDomainName`), so no extra cycle.
+   */
+  readonly distributionId: string;
 }
 
 /**
@@ -192,6 +211,48 @@ export class ConciergeChatStack extends Stack {
       methodResponses: [{ statusCode: '200' }, { statusCode: '400' }, { statusCode: '404' }],
     });
 
+    // --- Runtime config for the served SPA ---------------------------------
+    // The on-site chat widget (assets/web_application/index.html) is uploaded by
+    // the StorageStack and must stay environment-agnostic (no hard-coded API
+    // URL). Instead, THIS stack — which owns the chat API and therefore knows
+    // its URL — writes a tiny `web_application/chat-config.json` into the same
+    // content bucket. The widget fetches it at load time to discover the base
+    // URL. `api.url` is a deploy-time token, resolved by Source.jsonData.
+    //
+    // Cycle-safe: ConciergeChatStack already sits downstream of StorageStack
+    // (via ai -> compute -> storage), so writing into the bucket here is a
+    // one-directional reference; nothing reads back from this stack. The bucket
+    // is imported read/write by name (same string-prop convention as the rest
+    // of the stack). `prune: false` ensures this deployment only manages
+    // chat-config.json and never touches the SPA files the StorageStack owns.
+    const contentBucket = s3.Bucket.fromBucketName(this, 'ContentBucket', props.contentBucketName);
+    // Import the distribution by id (not a live construct) so writing+invalidating
+    // here does not create an Edge<->Chat cycle; EdgeStack is already upstream.
+    const distribution = cloudfront.Distribution.fromDistributionAttributes(this, 'EdgeDistribution', {
+      distributionId: props.distributionId,
+      // domainName is required by the import API but unused for invalidation.
+      domainName: cloudFrontDomainName,
+    });
+    new s3deploy.BucketDeployment(this, 'ChatConfigDeployment', {
+      destinationBucket: contentBucket,
+      destinationKeyPrefix: STORAGE_PREFIXES.webApplication,
+      sources: [
+        s3deploy.Source.jsonData('chat-config.json', {
+          chatApiBaseUrl: api.url,
+          allowedOrigin,
+        }),
+      ],
+      prune: false,
+      retainOnDelete: false,
+      // Auto-invalidate the config at the edge so the SPA sees the new URL
+      // immediately after a deploy (no manual CloudFront invalidation needed).
+      // distributionPaths are PUBLIC URL paths, not S3 keys: the distribution's
+      // origin path is `/web_application`, so the object lives at the public
+      // path `/chat-config.json`.
+      distribution,
+      distributionPaths: ['/chat-config.json'],
+    });
+
     new CfnOutput(this, 'ChatSubmitEndpoint', {
       // Full invoke URL for a chat submit, e.g.
       // https://<id>.execute-api.<region>.amazonaws.com/<stage>/chat (POST).
@@ -238,8 +299,12 @@ export class ConciergeChatStack extends Stack {
           '(b) grantReadData/grantWriteData expand to the single jobs table ' +
           'plus its CDK-generated `.../index/*` suffix (no indexes are defined); ' +
           '(c) grantInvoke resolves to the single worker function ARN plus the ' +
-          '`:*` version-qualifier form. All are CDK-generated scoped wildcards ' +
-          'on exactly the jobs table and the one worker function.',
+          '`:*` version-qualifier form; (d) the CDK-managed BucketDeployment ' +
+          'helper Lambda (ChatConfigDeployment) needs wildcard S3 access to read ' +
+          'the staged asset and write chat-config.json to the content bucket, ' +
+          'scoped to those buckets, plus cloudfront:CreateInvalidation (which ' +
+          'CloudFront does not support at resource level) to flush the config at ' +
+          'the edge. All are CDK-generated scoped wildcards.',
       },
       {
         id: 'AwsSolutions-IAM4',

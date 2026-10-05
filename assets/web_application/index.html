@@ -282,9 +282,12 @@
 <!-- ==========================================================================
   Octank On-Site Concierge Widget  (Blog 1 - "Be Called", Pattern A)
   Self-contained: no framework, no build step. Renders a floating chat bubble
-  that POSTs to the /chat endpoint, which invokes the geo-concierge AgentCore
-  harness server-side.
-  CONFIG: set CHAT_ENDPOINT to your deployed API Gateway /chat URL.
+  that uses the ASYNC submit/poll flow: it POSTs a turn to {base}chat (-> 202
+  {jobId}), then polls {base}chat/{jobId} until the job is DONE/ERROR. The
+  worker invokes the geo-concierge AgentCore harness server-side (~49s, which is
+  why the flow is async rather than a single synchronous POST).
+  CONFIG: set CHAT_API_BASE to your deployed API Gateway base URL (the stack's
+  ChatApiBaseUrl output, with trailing slash).
 =========================================================================== -->
 <style>
   #oc-launcher{position:fixed;right:20px;bottom:20px;z-index:9999;width:56px;height:56px;border-radius:50%;
@@ -319,9 +322,31 @@
 </div>
 <script>
 (function(){
-  // ---- CONFIG: replace with your deployed /chat endpoint -------------------
-  var CHAT_ENDPOINT = "https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/v1/chat";
+  // ---- CONFIG --------------------------------------------------------------
+  // The chat API base URL is NOT hard-coded here. It is discovered at load time
+  // from `chat-config.json`, which the ConciergeChatStack writes next to this
+  // page in the bucket (it knows its own API URL). This keeps the asset
+  // environment-agnostic — the same index.html works in any account/region.
+  // CHAT_API_BASE below is only a last-resort fallback for local preview.
+  var CHAT_API_BASE = "";                       // resolved from chat-config.json
+  var CONFIG_URL     = "chat-config.json";       // served alongside this page
+  // The widget submits a turn to {base}chat (POST -> 202 {jobId}) and then polls
+  // {base}chat/{jobId} (GET) until the job is DONE/ERROR. The async submit/poll
+  // flow exists because the AgentCore agent loop (~49s) exceeds API Gateway's
+  // hard 29s integration timeout.
+  var POLL_INTERVAL_MS = 2000;   // 2s between polls
+  var POLL_TIMEOUT_MS  = 90000;  // give up after 90s (worker caps ~49s + margin)
   // --------------------------------------------------------------------------
+  // Load the runtime config once, as early as possible, so the base URL is
+  // ready by the time the user sends a message. Non-fatal if it 404s.
+  fetch(CONFIG_URL, { cache: "no-store" })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(cfg){ if(cfg && cfg.chatApiBaseUrl){ CHAT_API_BASE = cfg.chatApiBaseUrl; } })
+    .catch(function(){ /* leave CHAT_API_BASE as-is */ });
+  function chatUrl(suffix){
+    return CHAT_API_BASE.replace(/\/+$/, "/") // ensure exactly one trailing slash
+         + "chat" + (suffix || "");
+  }
   var launcher=document.getElementById("oc-launcher"),
       panel=document.getElementById("oc-panel"),
       log=document.getElementById("oc-log"),
@@ -341,28 +366,72 @@
       if(!greeted){ addMsg("Hi! I can help you find a room, check availability, or compare rates across Octank's 25 hotels. What are you looking for?","oc-bot"); greeted=true; }
     }
   });
+  // Poll GET {base}chat/{jobId} until the job reaches a terminal state.
+  function pollJob(jobId, typing, startedAt){
+    fetch(chatUrl("/" + encodeURIComponent(jobId)), { method:"GET" })
+      .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+      .then(function(res){
+        var status = res.j && res.j.status;
+        if(res.ok && status === "DONE"){
+          typing.remove();
+          addMsg((res.j && res.j.reply) || "(no reply)", "oc-bot");
+          finish();
+          return;
+        }
+        if(!res.ok || status === "ERROR"){
+          typing.remove();
+          addMsg("Sorry, something went wrong \u2014 please try again.", "oc-bot");
+          finish();
+          return;
+        }
+        // Still PENDING — keep polling until the timeout.
+        if(Date.now() - startedAt > POLL_TIMEOUT_MS){
+          typing.remove();
+          addMsg("The concierge is taking longer than expected. Please try again.", "oc-bot");
+          finish();
+          return;
+        }
+        setTimeout(function(){ pollJob(jobId, typing, startedAt); }, POLL_INTERVAL_MS);
+      })
+      .catch(function(){
+        typing.remove();
+        addMsg("Network error \u2014 please try again.", "oc-bot");
+        finish();
+      });
+  }
+  function finish(){ send.disabled=false; input.focus(); }
   form.addEventListener("submit",function(e){
     e.preventDefault();
     var msg=input.value.trim(); if(!msg) return;
     addMsg(msg,"oc-user"); input.value=""; send.disabled=true;
+    // Config not loaded yet (or missing): the chat API URL is unknown. Fail
+    // clearly rather than POSTing to a relative "chat" path.
+    if(!CHAT_API_BASE){
+      addMsg("The concierge isn't configured yet \u2014 please try again in a moment.","oc-bot");
+      finish();
+      return;
+    }
     var typing=addMsg("Concierge is thinking\u2026","oc-bot oc-typing");
-    fetch(CHAT_ENDPOINT,{
+    // 1) Submit the turn — expect 202 {jobId, status:"PENDING"}.
+    fetch(chatUrl(),{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({message:msg, sessionId:sessionId})
     })
     .then(function(r){ return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
     .then(function(res){
-      typing.remove();
-      if(res.ok && res.j && res.j.reply){
+      if(res.ok && res.j && res.j.jobId){
+        // Reuse the server-assigned session across turns if provided.
         sessionId=res.j.sessionId||sessionId;
-        addMsg(res.j.reply,"oc-bot");
+        // 2) Poll for the result.
+        pollJob(res.j.jobId, typing, Date.now());
       }else{
+        typing.remove();
         addMsg((res.j&&res.j.message)||"Sorry, something went wrong.","oc-bot");
+        finish();
       }
     })
-    .catch(function(){ typing.remove(); addMsg("Network error \u2014 please try again.","oc-bot"); })
-    .finally(function(){ send.disabled=false; input.focus(); });
+    .catch(function(){ typing.remove(); addMsg("Network error \u2014 please try again.","oc-bot"); finish(); });
   });
 })();
 </script>

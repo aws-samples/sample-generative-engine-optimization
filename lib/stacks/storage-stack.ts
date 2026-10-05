@@ -19,6 +19,13 @@ export interface StorageStackProps extends BaseStackProps {
    * bucket at deploy time.
    */
   readonly assetsDir?: string;
+  /**
+   * CloudFront distribution id (via context, like the promoter's). When set,
+   * the SPA upload auto-invalidates the edge cache so content changes are
+   * served immediately. Absent on the first deploy (EdgeStack doesn't exist
+   * yet); supply it later with `-c distributionId=...`.
+   */
+  readonly distributionId?: string;
 }
 
 /**
@@ -38,13 +45,14 @@ export class StorageStack extends Stack {
   constructor(scope: Construct, id: string, props: StorageStackProps) {
     super(scope, id, props);
 
-    const { config, assetsDir } = props;
+    const { config, assetsDir, distributionId } = props;
 
     this.contentStorage = new ContentStorage(this, 'Storage', {
       prefix: config.prefix,
       storage: config.storage,
       retainData: config.retainData,
       assetsDir,
+      distributionId,
     });
 
     new CfnOutput(this, 'BucketName', {
@@ -85,7 +93,10 @@ export class StorageStack extends Stack {
             reason:
               'The CDK-managed BucketDeployment Lambda needs wildcard S3 access ' +
               'to read the staged asset bucket and write objects to the ' +
-              'destination bucket. Scope is limited to those buckets.',
+              'destination bucket (scope limited to those buckets), plus ' +
+              'cloudfront:CreateInvalidation when a distribution id is supplied ' +
+              '(CloudFront does not support resource-level ARNs for invalidation) ' +
+              'to flush the SPA edge cache after an upload.',
           },
         ],
         true,
