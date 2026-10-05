@@ -114,6 +114,9 @@ new ConciergeChatStack(app, `${prefix}-concierge-chat`, {
   harnessArn: ai.harnessArn,
   cloudFrontDomainName: edge.domainName,
   chatCodeDir: path.join(assetsDir, 'code', 'chat-endpoint'),
+  // The bucket NAME (string) lets this stack write the widget's runtime
+  // chat-config.json into web_application/ without a Storage<->Chat cycle.
+  contentBucketName: storage.bucket.bucketName,
 });
 
 new WorkflowStack(app, `${prefix}-workflow`, {

@@ -24,6 +24,7 @@ function synth(context: Record<string, unknown> = {}): Template {
     harnessArn: FAKE_HARNESS_ARN,
     cloudFrontDomainName: FAKE_CF_DOMAIN,
     chatCodeDir: path.resolve(process.cwd(), 'assets', 'code', 'chat-endpoint'),
+    contentBucketName: 'geo-demo-dev-content-123456789012-ca-central-1',
   });
   return Template.fromStack(stack);
 }
@@ -184,5 +185,13 @@ describe('ConciergeChatStack (async submit/worker/poll chat API)', () => {
     template.hasOutput('ChatSubmitEndpoint', {});
     template.hasOutput('ChatApiBaseUrl', {});
     template.hasOutput('ChatFunctionName', {});
+  });
+
+  it('writes the widget runtime config into web_application/ (chat-config.json)', () => {
+    // The BucketDeployment that writes chat-config.json synthesizes to a
+    // Custom::CDKBucketDeployment resource scoped to the web_application/ prefix.
+    template.hasResourceProperties('Custom::CDKBucketDeployment', {
+      DestinationBucketKeyPrefix: 'web_application/',
+    });
   });
 });
