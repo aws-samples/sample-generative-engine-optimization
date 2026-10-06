@@ -5,6 +5,8 @@ the [project README](../README.md) for a high-level overview, then dive in:
 
 | Document | What's inside |
 | -------- | ------------- |
+| [LAYERS.md](LAYERS.md) | Per-layer technical deep-dive — Network, Storage, Database, Compute, Edge, Workflow, Logging, Analytics, and the synth-only AI + Chat layers. |
+| [ADR.md](ADR.md) | Architecture decision records — the significant decisions (stack-per-concern, RDS Data API, single NAT, stage-only loop, one-direction cross-stack refs, async chat, two-tier tests). |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System overview, stack-by-stack detail, request + feedback-loop flows, cross-stack references and dependency-cycle avoidance, deploy order. |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Prerequisites, bootstrap, build/test/synth, deploy order, the two-phase `distributionId` step, verification, log locations, teardown, and troubleshooting. |
 | [CONFIGURATION.md](CONFIGURATION.md) | Complete config reference — every context key, default, and validation rule; how resolution and overrides work; storage prefixes. |
