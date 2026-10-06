@@ -2,322 +2,58 @@
 
 AWS CDK (TypeScript) infrastructure for the **Octank Hospitality** platform — a
 Generative Engine Optimization (GEO) demo for a hotel-booking system. External
-AI engines (ChatGPT, Perplexity, etc.) and browsers reach a single-page app and
-a public REST API; the API queries an Aurora database, and a set of worker
-Lambdas run a content feedback loop. The app is organized as a set of small,
-single-responsibility stacks so each component can be built out and deployed
-independently.
+AI engines (ChatGPT, Perplexity, Amazon Rufus, …) and browsers reach a
+single-page app and a public REST API; the API queries an Aurora database, and a
+set of worker Lambdas run a content feedback loop. The app is organized as a set
+of small, single-responsibility stacks so each component can be built out and
+deployed independently.
 
-> Status: **in progress**. `NetworkStack`, `DatabaseStack`, `StorageStack`,
-> `ComputeStack`, `EdgeStack`, `WorkflowStack` (feedback-loop Step Function),
-> `MonitoringStack` (logging module), and `AnalyticsStack` (Glue + Athena over
-> the CloudFront logs) are implemented and verified by unit/synth tests.
-> `AiStack` (Bedrock AgentCore Gateway + managed Harness concierge) and
-> `ConciergeChatStack` (public async submit/poll chat API) build and `cdk synth`
-> clean but are the newest stacks and are not yet verified against a live
-> deploy. Components are fleshed out incrementally.
+The design follows the GEO blog's two levels of AI discoverability — **be
+cited** (serve structured, crawlable content) and **be called** (expose
+machine-callable APIs for agents) — plus a measurement loop that tracks citation
+share and stages fixes.
 
-📚 **Technical documentation** lives in [`docs/`](docs/README.md): architecture,
-deployment, configuration, and security.
+📚 **Documentation:** [technical layers](docs/LAYERS.md) ·
+[architecture decisions](docs/ADR.md) · [docs index](docs/README.md)
 
 ## Architecture
 
-```
-   AI engines / browsers
-            │  HTTPS
-            ▼
-   ┌──────────────────┐
-   │    CloudFront     │  (EdgeStack)
-   └───┬──────────┬────┘
- default│          │ /api/*
- (S3 OAC)          │
-       ▼           ▼
- ┌───────────┐  ┌──────────────────┐
- │ S3 content│  │ REST API (APIGW)  │  (ComputeStack)
- │  bucket   │  └────────┬─────────┘
- │(StorageStk)│          │ Lambda proxy
- └───────────┘  ┌────────▼─────────┐
-                │  api-handler λ    │  (VPC)
-                └────────┬─────────┘
-                         │ RDS Data API (HTTP)
-                         ▼
-                ┌──────────────────┐
-                │ Aurora PostgreSQL │  (DatabaseStack)
-                │  Serverless v2    │
-                └──────────────────┘
+![GEO on AWS — Octank Hospitality architecture](docs/Geo-Blog-Architecture.png)
 
- Worker Lambdas (VPC, ComputeStack): citation-tracker -> Bedrock;
-   patch-applier -> staging/;  promoter -> web_application/ + CloudFront invalidation
+An AI engine or browser reaches the site and API through **Amazon CloudFront**
+(`EdgeStack`). The default behavior serves the SPA and structured content
+(HTML + JSON-LD, `llms.txt`, `robots.txt`) from a private **Amazon S3** bucket
+via Origin Access Control; the `/api/*` behavior routes to a public **Amazon API
+Gateway** REST API (`ComputeStack`). The API's `api-handler` **AWS Lambda**
+queries **Amazon Aurora PostgreSQL Serverless v2** (`DatabaseStack`) over the
+**RDS Data API**. Three worker Lambdas run the GEO feedback loop — a
+`citation-tracker` (Amazon Bedrock), a `patch-applier` (writes candidates to
+`staging/`), and a `promoter` (stage-only validation) — orchestrated by an **AWS
+Step Functions** state machine (`WorkflowStack`). **Amazon Athena** over
+CloudFront logs (`AnalyticsStack`) and VPC Flow Logs (`MonitoringStack`) provide
+measurement.
 
- NetworkStack       : VPC, subnets, 1 NAT, VPC endpoints (incl. RDS Data API), SGs
- WorkflowStack      : GEO feedback-loop Step Function (the 3 worker Lambdas)
- MonitoringStack    : VPC Flow Logs -> S3 logs/vpc_flow/ (logging module)
- AnalyticsStack     : Glue DB + Athena workgroup over S3 logs/cf_logs/
- AiStack            : Bedrock AgentCore Gateway + managed Harness concierge (synth-only)
- ConciergeChatStack : public async submit/poll chat API -> AgentCore harness (synth-only)
-```
+For a layer-by-layer deep dive, see **[docs/LAYERS.md](docs/LAYERS.md)**. For
+request/feedback-loop flows and cross-stack cycle avoidance, see
+**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
-### Stacks (`lib/stacks`)
+## Stacks
 
 | Stack             | Component            | Status | Responsibility                                   |
 | ----------------- | -------------------- | ------ | ------------------------------------------------ |
-| `NetworkStack`    | VPC                  | ✅ done | Subnets, NAT, security groups, VPC endpoints, flow logs |
-| `StorageStack`    | S3                   | ✅ done | Single bucket: web_application/, code/, logs/, staging/ + asset upload |
+| `NetworkStack`    | VPC                  | ✅ done | Subnets, NAT, security groups, VPC endpoints |
+| `StorageStack`    | S3                   | ✅ done | Single bucket (`web_application/`, `code/`, `logs/`, `staging/`) + asset upload |
 | `DatabaseStack`   | Aurora               | ✅ done | Serverless v2 cluster + Secrets Manager creds    |
 | `ComputeStack`    | Lambda + API         | ✅ done | 4 VPC Lambdas + public REST API (Octank Hospitality) |
+| `EdgeStack`       | CloudFront           | ✅ done | SPA via S3 (OAC) + `/api/*` to API, access logs  |
+| `AnalyticsStack`  | Athena               | ✅ done | Glue DB + EXTERNAL table + workgroup over `logs/cf_logs/` |
+| `WorkflowStack`   | Step Functions       | ✅ done | GEO feedback-loop state machine (3 worker Lambdas) |
+| `MonitoringStack` | CloudWatch / S3 logs | ✅ done | Logging module: VPC Flow Logs → S3 `logs/vpc_flow/` |
 | `AiStack`         | Bedrock AgentCore    | ⚠️ synth-only | AgentCore Gateway + managed Harness concierge (not yet live-verified) |
-| `AnalyticsStack`  | Athena               | ✅ done | Glue DB + EXTERNAL table + Athena workgroup over `logs/cf_logs/` |
-| `EdgeStack`       | CloudFront           | ✅ done | SPA via S3 (OAC) + `/api/*` to API, logs to `logs/cf_logs/` |
-| `ConciergeChatStack` | API GW + Lambda + DynamoDB | ⚠️ synth-only | Public async submit/poll chat API fronting the AgentCore harness |
-| `WorkflowStack`   | Step Functions       | ✅ done | GEO feedback-loop state machine orchestrating the 3 worker Lambdas |
-| `MonitoringStack` | CloudWatch / S3 logs | ✅ done | Logging module: VPC Flow Logs → S3 `logs/vpc_flow/` (alarms/dashboards later) |
+| `ConciergeChatStack` | API GW + Lambda + DynamoDB | ⚠️ synth-only | Public async submit/poll chat API fronting the harness |
 
-Each stack composes a matching reusable construct from `lib/constructs`
-(see that folder's README for the mapping).
-
-### Network layer (implemented)
-
-`NetworkStack` → `BlogNetwork` construct provisions:
-
-- **VPC** across 2 AZs (`10.0.0.0/16`), DNS support + hostnames enabled.
-- **Subnets** (per AZ): `public` (hosts NAT), `private-egress` (hosts Lambda),
-  `private-isolated` (hosts Aurora, no internet route).
-- **1 regional NAT gateway** + Internet Gateway (cost-efficient; egress is
-  interrupted only if that AZ fails — Aurora and VPC-endpoint traffic are
-  unaffected).
-- **VPC endpoints**: S3 **gateway** endpoint (free); **interface** endpoints for
-  Secrets Manager, **RDS Data API**, Bedrock (+ runtime, + agent-runtime), and
-  CloudWatch Logs so that traffic avoids the NAT and stays on the AWS network.
-  (The RDS Data API endpoint lets the VPC-attached Lambdas query Aurora over
-  HTTP without a socket connection.)
-- **Security groups**:
-  - `lambda-sg` — attached to the API functions; no inbound, egress allowed.
-  - `database-sg` — Aurora; inbound `5432` **only** from `lambda-sg`.
-  - `endpoint-sg` — interface endpoints; inbound `443` from `lambda-sg`.
-
-VPC Flow Logs are **not** defined here — the MonitoringStack owns them and
-delivers to S3 (`logs/vpc_flow/`); see the logging section below.
-
-Outputs `VpcId` and `LambdaSecurityGroupId` are exported for cross-stack use by
-`DatabaseStack` and `ComputeStack`.
-
-### Storage layer (implemented)
-
-`StorageStack` → `ContentStorage` construct provisions **one** S3 bucket
-(deterministic, collision-safe name `geo-demo-content-<account>-<region>`) with
-these prefixes:
-
-| Prefix              | Purpose                                              | Served? |
-| ------------------- | ---------------------------------------------------- | ------- |
-| `web_application/`  | Single-page app + served files (CloudFront OAC origin) | ✅ |
-| `code/`             | Lambda code, OpenAPI import spec, DB DDL/seed (`code/db/`) | ❌ |
-| `logs/cf_logs/`     | CloudFront standard access logs                       | ❌ |
-| `logs/athena_logs/` | Athena query results                                  | ❌ |
-| `logs/s3/`          | S3 server access logs (bucket logs to itself)         | ❌ |
-| `staging/`          | Feedback-loop area (agent corrections awaiting review) | ❌ |
-
-Secure defaults: all public access blocked, S3-managed encryption, TLS-only
-bucket policy, versioning, and self server-access logging. Bucket **ACLs are
-enabled** (`BucketOwnerPreferred`) so CloudFront native logging can write to
-`logs/cf_logs/`. Per-prefix lifecycle rules expire logs/query-results and
-transition `web_application/` to Infrequent Access. Removal + object auto-delete
-are driven by `retainData`.
-
-**Asset upload.** The repo's `assets/` tree is uploaded into the bucket at
-deploy time via CDK `BucketDeployment`:
-
-| Local path                | Bucket destination |
-| ------------------------- | ------------------ |
-| `assets/web_application/` | `web_application/` |
-| `assets/code/`            | `code/`            |
-| `assets/db/`              | `code/db/`         |
-
-`assets/web_application/` holds the real SPA content; `assets/code/` holds the
-four Python Lambda handlers + OpenAPI specs; `assets/db/geo_demo_full.sql` is the
-full hotel-booking schema + sample data (applied to Aurora by the DatabaseStack
-schema loader — see the Database layer below). Outputs `BucketName` and
-`BucketArn` are exported for consumers. The CDK-managed BucketDeployment Lambda
-carries documented cdk-nag suppressions (L1/IAM4/IAM5).
-
-### Database layer (implemented)
-
-`DatabaseStack` → `BlogDatabase` construct provisions:
-
-- **Aurora PostgreSQL Serverless v2** cluster (writer + optional readers),
-  engine version pinned via config (never "latest").
-- Placed in the network's **private-isolated subnets**; **storage encrypted**;
-  **IAM database authentication** enabled.
-- Its **own security group** (owned by this stack, not the network layer, to
-  keep cross-stack references acyclic) allowing ingress on the DB port **only
-  from the Lambda tier's security group**.
-- **Master credentials generated into Secrets Manager** (no passwords in code
-  or state); fetched by Lambda via the Secrets Manager interface endpoint.
-- **Config-gated extras** (off by default): an **RDS Proxy** for connection
-  pooling and **Secrets Manager rotation**.
-- **Teardown behavior driven by `retainData`**: dev (`false`) destroys the
-  cluster with no deletion protection for clean `cdk destroy`; `true` switches
-  to a `SNAPSHOT` removal policy with deletion protection enabled.
-
-Outputs `ClusterEndpoint`, `SecretArn`, and `ClusterArn` are exported for
-`ComputeStack`. The **RDS Data API is enabled** on the cluster so the Lambda
-tier can query it over HTTP.
-
-**Schema + data loading.** A custom resource (the `db-loader` Lambda) applies
-`assets/db/geo_demo_full.sql` to the cluster on deploy: it reads the script from
-S3 (`code/db/geo_demo_full.sql`, uploaded by the StorageStack), splits it into
-statements, and runs them via the RDS Data API inside a single transaction. The
-script is self-contained and re-runnable (DROP … CASCADE + CREATE + inserts +
-sequence resets), so it is idempotent; the loader re-runs automatically whenever
-the SQL content changes (tracked by a content hash). It runs after the cluster
-is ready and needs no VPC attachment (Data API + S3 are public AWS endpoints).
-
-The cross-stack VPC/SG references use CDK's "strong" reference strength
-(`@aws-cdk/core:defaultCrossStackReferences` in `cdk.json`), so a producing
-stack cannot be deleted while a consumer still references it — teardown must run
-in reverse dependency order (which `bin/app.ts` already expresses).
-
-### Compute layer (implemented)
-
-`ComputeStack` → `BlogApi` construct provisions the four GEO Lambdas and the
-public API, modeled on the functions discovered in the target account:
-
-| Function             | Timeout | Access (least-privilege)                          |
-| -------------------- | ------- | ------------------------------------------------- |
-| `api-handler`        | 30s     | RDS **Data API** on the cluster + read DB secret  |
-| `citation-tracker`   | 300s    | Bedrock `InvokeModel*` + `PutMetricData` (ns-scoped) + read `code/` |
-| `patch-applier`      | 3s      | Read `web_application/*`, read/write `staging/*`  |
-| `promoter`           | 3s      | Read/write `web_application/*` + `staging/*`, CloudFront invalidation, metrics |
-
-- All functions are **python3.13**, handler `lambda_function.lambda_handler`,
-  sourced from `assets/code/<name>/`, and **attached to the VPC**
-  (private-egress subnets, network `lambdaSecurityGroup`).
-- **Public regional REST API Gateway** ("Octank Hospitality API") fronts
-  `api-handler` via Lambda proxy integration, with the route tree:
-  `GET /properties`, `GET /properties/{propertyId}`,
-  `GET /properties/{propertyId}/rates`,
-  `GET /properties/{propertyId}/availability`, `POST /reservations`.
-  The API is intentionally **public** so external AI engines can call it; the
-  Lambdas' VPC attachment governs only their outbound access (Aurora Data API,
-  Secrets Manager, Bedrock, S3 — all via VPC endpoints).
-- Stage access logging + throttling enabled. `ApiEndpoint` is exported.
-- The `promoter`'s CloudFront `distributionId` is supplied via context until the
-  EdgeStack is built: `-c distributionId=E2HKAT79V522DO`.
-
-Documented cdk-nag suppressions cover the intentional public API (APIG4/COG4),
-the pinned python3.13 runtime (L1), managed exec/VPC roles (IAM4), and
-scoped-wildcard grants (IAM5).
-
-### Edge layer (implemented)
-
-`EdgeStack` → `BlogDistribution` construct provisions the CloudFront distribution:
-
-- **Default behavior** → the S3 content bucket via **Origin Access Control
-  (OAC)**, origin path `/web_application`, `index.html` root, managed
-  CachingOptimized policy, HTTPS-only, security-headers response policy.
-- **`/api/*` behavior** → the ComputeStack REST API origin (CachingDisabled,
-  AllViewerExceptHostHeader), so external agents reach the API on the same
-  domain.
-- **Standard access logging** to the content bucket under `logs/cf_logs/`
-  (this is why the StorageStack enables bucket ACLs).
-- The SPA content is the **real** site synced from
-  `s3://geo-demo-content-a2z4/web-application/` into `assets/web_application/`
-  (index.html, llms.txt, openapi.json, robots.txt, sitemap.xml, 25 property
-  pages) and uploaded by the StorageStack.
-- Outputs `DistributionId` and `DistributionDomainName`.
-
-**Cross-stack cycle avoidance.** EdgeStack imports the content bucket
-**read-only by name** (`Bucket.fromBucketName`) rather than consuming the live
-construct. This prevents `withOriginAccessControl` from writing a back-reference
-bucket policy into the StorageStack (which would create a Storage↔Edge cycle);
-instead the OAC `s3:GetObject` statement is added explicitly in the StorageStack
-with a `distribution/*` SourceArn condition. Likewise, the promoter's
-`distributionId` is passed via context, not a live Edge→Compute reference, to
-avoid a Compute↔Edge cycle.
-
-Documented cdk-nag suppressions cover the demo distribution's default
-certificate and absence of WAF/geo-restrictions (CFR1/CFR2/CFR4).
-
-### Workflow layer (implemented)
-
-`WorkflowStack` → `BlogWorkflow` construct provisions the **GEO feedback-loop**
-as a Standard Step Functions state machine (`geo-demo-dev-feedback-loop`),
-mirroring the one discovered in the account. It orchestrates the three worker
-Lambdas and is **stage-only** (never writes to live content):
-
-```
-MeasureLive (citation-tracker, target=live)
-  → HasGap?  (a top_fix was diagnosed?)
-       yes → ApplyPatch (patch-applier → staging/)
-               → PatchChanged?
-                    yes → ReTestCandidate (citation-tracker, target=staging)
-                            → ValidateAndStage (promoter, stage-only)
-                            → Done
-                    no  → NoGapDone
-       no  → NoGapDone
-```
-
-The state machine's role only gets `lambda:InvokeFunction` on the three workers
-(granted automatically by the `LambdaInvoke` tasks). Execution logging to a
-DESTROY-policy CloudWatch log group + X-Ray tracing are on by default
-(`-c workflowLogging=false` to disable). The `StateMachineArn` is exported. By
-default it is triggered **weekly** by an EventBridge Scheduler schedule
-(`${prefix}-feedback-loop-weekly`, `rate(7 days)`, `America/Chicago`, mirroring
-the live schedule); you can still start it on demand. Disable the schedule with
-`-c workflowSchedule=false`, or retune it with `-c workflowScheduleExpression=…`
-and `-c workflowScheduleTimezone=…`. The `staging/` prefix it depends on is
-seeded with a `.keep` marker by the StorageStack so it always exists.
-
-### Logging / observability (implemented)
-
-`MonitoringStack` → `BlogObservability` construct is the platform's **logging
-module**. As a prototype it routes every log source that natively supports S3
-into the shared content bucket, and leaves CloudWatch-only sources (which
-cannot write to S3) on CloudWatch with consistent retention.
-
-Log inventory:
-
-| Source                | Destination                     | Where configured |
-| --------------------- | ------------------------------- | ---------------- |
-| VPC Flow Logs         | S3 `logs/vpc_flow/`             | MonitoringStack  |
-| CloudFront access     | S3 `logs/cf_logs/`              | EdgeStack        |
-| S3 server access      | S3 `logs/s3/` (self-logging)    | StorageStack     |
-| Athena query results  | S3 `logs/athena_logs/`          | AnalyticsStack   |
-| Lambda functions      | CloudWatch Logs (native only)   | ComputeStack     |
-| API Gateway access    | CloudWatch Logs (native only)   | ComputeStack     |
-
-> Why some logs stay on CloudWatch: **API Gateway access logs and Lambda logs
-> can only be delivered to CloudWatch Logs** — S3 is not a valid direct
-> destination for them. Archiving those to S3 would require a
-> CloudWatch → Firehose → S3 export pipeline, which is deferred beyond the
-> prototype.
-
-The flow log is created as a standalone `ec2.FlowLog` in the MonitoringStack
-(not via `vpc.addFlowLog`, which would attach it to the NetworkStack). The
-MonitoringStack imports the log bucket read-only by name to avoid a
-Monitoring↔Storage policy cycle. cdk-nag `AwsSolutions-VPC7` is suppressed on
-the NetworkStack because the flow log legitimately lives in another stack.
-
-### Analytics layer (implemented)
-
-`AnalyticsStack` provides SQL-over-S3 analytics on the CloudFront access logs
-via the Glue Data Catalog + Athena (built from L1 `Cfn*` resources):
-
-- **Glue database** `geo_demo_dev_logs` and a **Glue EXTERNAL table**
-  `cloudfront_logs` over the content bucket's `logs/cf_logs/` prefix, modeling
-  the 33-field CloudFront standard access-log schema (LazySimpleSerDe,
-  tab-delimited, `skip.header.line.count=2`). The table `DependsOn` the database.
-- **Athena workgroup** `geo-demo-dev-analytics` (enforced config, CloudWatch
-  metrics on, engine `AUTO`), with query results written to `logs/athena_logs/`.
-- Data comes from **30 sample CloudFront log files** seeded into `logs/cf_logs/`
-  by the StorageStack, plus the real access logs the live distribution delivers
-  there. A `SELECT count(*)` against the sample set returns ~4959 rows.
-
-**Cross-stack cycle avoidance.** The stack takes the content bucket **name only**
-(`contentBucketName`), so it just builds S3 location strings and grants nothing
-on the bucket — no Storage↔Analytics cycle. See
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trailing-slash detail (the
-Glue `Location` drops the trailing slash; the Athena `OutputLocation` keeps it)
-and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for a sample verification query.
+Each stack composes a matching reusable construct from `lib/constructs`.
+Deep-dive details for every layer are in **[docs/LAYERS.md](docs/LAYERS.md)**.
 
 ## Project layout
 
@@ -329,7 +65,7 @@ lib/constructs/       Reusable L3 constructs, one per component
 assets/               Content uploaded to S3: web_application/, code/ (Lambdas), db/ (DDL+seed)
 test/unit/            Jest synthesis tests (fast, no AWS calls)
 test/integration/     Jest tests against deployed resources (self-skip w/o env)
-docs/                 Technical documentation (architecture, deployment, config, security)
+docs/                 Technical documentation (layers, ADRs, architecture, deployment, config, security)
 cdk.json              CDK app command + feature flags
 ```
 
@@ -339,79 +75,90 @@ cdk.json              CDK app command + feature flags
 - AWS credentials configured (`aws sts get-caller-identity` should succeed)
 - CDK bootstrapped in the target account/region:
   `npx cdk bootstrap aws://<account>/<region>`
+- For the citation tracker / AgentCore: **Amazon Bedrock model access** enabled
+  for the configured model in your region.
 
-## Common commands
+## Quick start
 
 ```bash
 npm install                 # install dependencies
-
 npm run build               # type-check (tsc --noEmit)
 npm run test                # unit tests (synthesis assertions)
-npm run test:integ          # integration tests (needs a deployment; self-skips)
-npm run lint                # eslint
-
 npm run synth               # cdk synth --strict (all stacks)
-npm run diff                # cdk diff
 npm run deploy -- --all     # deploy every stack
-
-# Override any default at deploy time via CDK context (see table below):
-npm run synth -- -c cidr=10.42.0.0/16 -c natGateways=2
-npm run deploy -- --all -c cidr=10.42.0.0/16
 ```
+
+> **Two-phase first deploy.** The `promoter` Lambda and SPA cache invalidation
+> need the CloudFront `distributionId`, which doesn't exist until `EdgeStack` is
+> created. Deploy once, read the `DistributionId` from the EdgeStack output,
+> then redeploy Storage + Compute with it:
+>
+> ```bash
+> npm run deploy -- --all
+> DIST_ID=$(aws cloudformation describe-stacks --stack-name geo-demo-dev-edge \
+>   --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text)
+> npm run deploy -- geo-demo-dev-storage geo-demo-dev-compute -c distributionId=$DIST_ID
+> ```
+>
+> See [ADR-0005](docs/ADR.md) for why. Full deploy order and teardown are in
+> [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## Testing
+
+Two tiers (see [ADR-0007](docs/ADR.md)):
+
+### Unit tests — no AWS, no deploy
+
+Synthesize the stacks in memory and assert on the CloudFormation templates.
+Fast, free, and CI-safe.
+
+```bash
+npm run test        # or: npm run test:unit
+```
+
+### Integration tests — against a live deployment
+
+Hit the deployed endpoints and assert on real responses. Organized around the
+blog's business scenario (a traveler asks an AI to *"find a pet-friendly hotel
+in Denver this weekend under $200 and book it"*), with one file per GEO layer:
+
+| File | Layer | Covers |
+|------|-------|--------|
+| `foundation.integ.test.ts` | Be cited | `llms.txt`, `robots.txt` AI crawlers, `sitemap.xml`, LodgingBusiness JSON-LD, security headers |
+| `agentic.integ.test.ts` | Be called | `searchProperties` → `getAvailability` → `getRates` → `createReservation` idempotency, typed inputs, structured errors |
+| `measurement.integ.test.ts` | Measure | Athena crawler query, Step Functions feedback loop, stage-only IAM guarantee, (Bedrock citation tracker — gated) |
+
+Each `describe` block **self-skips** when its required env vars are unset, so the
+suite stays green in CI without a deployment.
+
+```bash
+# 1. Deploy, then point the tests at the deployment:
+export BLOG_URL="https://$(aws cloudformation describe-stacks \
+  --stack-name geo-demo-dev-edge \
+  --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue" \
+  --output text)"
+
+# 2. (Optional) enable the measurement-layer checks:
+export ATHENA_WORKGROUP="geo-demo-dev-analytics"
+export ATHENA_DATABASE="geo_demo_dev_logs"
+export STATE_MACHINE_ARN="arn:aws:states:<region>:<acct>:stateMachine:geo-demo-dev-feedback-loop"
+export CONTENT_BUCKET="geo-demo-dev-content-<acct>-<region>"
+
+# 3. Run the integration suite:
+npm run test:integ
+```
+
+The full env-var reference and the Bedrock-gated test are documented in
+[`test/integration/README.md`](test/integration/README.md).
 
 ## Configuration
 
-There is a single environment (`dev`). All configuration is **centralized** in
-`lib/config/index.ts` — one source of truth, no values scattered across stacks.
-Each tunable has a **default** (in the `*_DEFAULTS` objects) that a user can
-**override at deploy time via CDK context** (`-c key=value`) without editing any
-source. Overrides are validated, so a bad value fails fast at synth with a clear
-message. A full reference is in [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
-
-Account/region resolve from the CDK CLI environment or the
+A single environment (`dev`). All configuration is **centralized** in
+[`lib/config/index.ts`](lib/config/index.ts) — one source of truth. Each tunable
+has a default that you can **override at deploy time via CDK context**
+(`-c key=value`) without editing source; overrides are validated and fail fast
+at synth. Account/region resolve from the CDK CLI environment or the
 `CDK_DEPLOY_ACCOUNT` / `CDK_DEPLOY_REGION` vars.
-
-| Context key      | Default        | Validation            | Meaning                                        |
-| ---------------- | -------------- | --------------------- | ---------------------------------------------- |
-| `cidr`           | `10.0.0.0/16`  | IPv4 CIDR, /16../28    | VPC IPv4 CIDR block                             |
-| `maxAzs`         | `2`            | integer 1..6           | Availability Zones to span                      |
-| `natGateways`    | `1`            | integer 0..maxAzs      | NAT gateways (1 = single regional; bump for HA) |
-| `subnetCidrMask` | `24`           | integer 16..28         | Netmask for each subnet CIDR                     |
-| `databasePort`   | `5432`         | integer 1..65535       | Database port (PostgreSQL)                       |
-| `dbName`         | `geo_db`       | string                 | Initial database name                            |
-| `engineVersion`  | `16.13`        | `major.minor`          | Aurora PostgreSQL version (pinned, not "latest") |
-| `minAcu`         | `0.5`          | number 0.5..256        | Serverless v2 min capacity (ACU)                 |
-| `maxAcu`         | `2`            | number >= minAcu       | Serverless v2 max capacity (ACU)                 |
-| `readers`        | `0`            | integer 0..15          | Reader instances (0 = writer only)               |
-| `enableProxy`    | `false`        | true/false             | Provision an RDS Proxy (connection pooling)      |
-| `enableRotation` | `false`        | true/false             | Enable Secrets Manager credential rotation       |
-| `logRetentionDays`              | `90` | integer 1..3650 | Expire objects under `logs/` after N days     |
-| `queryResultRetentionDays`      | `30` | integer 1..3650 | Expire Athena results (`logs/athena_logs/`)   |
-| `contentIaTransitionDays`       | `90` | integer 1..3650 | Transition `web_application/` to Infrequent Access |
-| `noncurrentVersionRetentionDays`| `30` | integer 1..3650 | Expire noncurrent object versions             |
-| `lambdaMemoryMb`        | `128`  | integer 128..10240 | Lambda memory (all functions)                 |
-| `apiTimeoutSeconds`     | `30`   | integer 1..900     | api-handler timeout                            |
-| `citationTimeoutSeconds`| `300`  | integer 1..900     | citation-tracker timeout                       |
-| `workerTimeoutSeconds`  | `3`    | integer 1..900     | patch-applier / promoter timeout               |
-| `apiStageName`          | `prod` | string             | API Gateway stage name                         |
-| `apiThrottleRateLimit`  | `50`   | integer 1..10000   | API steady-state requests/sec                  |
-| `apiThrottleBurstLimit` | `100`  | integer 1..10000   | API burst requests                             |
-| `bedrockModelId`        | `global.anthropic.claude-sonnet-4-6` | string | Bedrock model for citation-tracker |
-| `distributionId`        | (none) | string             | CloudFront dist id for promoter invalidation   |
-| `priceClass`            | `all`  | all / 200 / 100    | CloudFront price class                          |
-| `defaultRootObject`     | `index.html` | string       | SPA root object                                 |
-| `apiPathPattern`        | `/api/*` | string           | Path routed to the API origin                   |
-| `flowLogTrafficType`    | `ALL`  | ALL / ACCEPT / REJECT | VPC Flow Log traffic captured to S3          |
-| `workflowLogging`       | `true` | true/false         | Enable Step Function execution logging + tracing |
-| `workflowSchedule`      | `true` | true/false         | Create the weekly EventBridge Scheduler trigger  |
-| `workflowScheduleExpression` | `rate(7 days)` | string   | Schedule expression (EventBridge Scheduler syntax) |
-| `workflowScheduleTimezone`   | `America/Chicago` | string | Timezone the schedule is evaluated in           |
-| `analyticsDatabaseName` | `geo_demo_dev_logs` | string | Glue database for the CloudFront log table |
-| `analyticsTableName`    | `cloudfront_logs` | string   | Glue EXTERNAL table over `logs/cf_logs/`       |
-| `analyticsWorkgroupName`| `geo-demo-dev-analytics` | string | Athena workgroup name                   |
-| `retainData`     | `false`        | truthy                 | Retain stateful resources on stack deletion      |
-
-Examples:
 
 ```bash
 # Use defaults
@@ -421,26 +168,23 @@ npm run deploy -- --all
 npm run deploy -- --all -c cidr=10.42.0.0/16 -c maxAzs=2 -c natGateways=2
 ```
 
-To change a **default** for everyone, edit `NETWORK_DEFAULTS`,
-`DATABASE_DEFAULTS`, `STORAGE_DEFAULTS`, `COMPUTE_DEFAULTS`, `EDGE_DEFAULTS`,
-`MONITORING_DEFAULTS`, `WORKFLOW_DEFAULTS`, or `ANALYTICS_DEFAULTS` in
-`lib/config/index.ts`. To change a value for a **single deploy**, pass it as
-context — no code change needed.
+The complete reference — every context key, default, and validation rule — is in
+**[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**.
 
 ## Compliance
 
-`bin/app.ts` applies cdk-nag's `AwsSolutionsChecks` at synth time. As stacks are
-implemented, resolve findings (or add scoped `NagSuppressions` with a reason)
-before deploying.
+`bin/app.ts` applies cdk-nag's `AwsSolutionsChecks` at synth time. Findings are
+resolved or carry documented `NagSuppressions`; see
+[docs/SECURITY.md](docs/SECURITY.md).
 
-## Next steps
+## Documentation
 
-Verify the two synth-only stacks against a live deploy, in dependency order:
-~~Network~~ → ~~Storage~~ → ~~Database~~ → ~~Compute~~ → Ai → ~~Analytics~~ →
-~~Edge~~ → ConciergeChat → ~~Workflow~~ → ~~Monitoring~~. `AiStack` and
-`ConciergeChatStack` synthesize cleanly but their AgentCore / async-chat
-resources have not been exercised live yet (see
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
-Add resource assertions to a dedicated unit test per stack (see
-`test/unit/network-stack.test.ts` as the template) and live checks to the
-integration suite as you go.
+| Document | What's inside |
+| -------- | ------------- |
+| [docs/LAYERS.md](docs/LAYERS.md) | Per-layer technical deep-dive (Network, Storage, Database, Compute, Edge, Workflow, Logging, Analytics, AI, Chat) |
+| [docs/ADR.md](docs/ADR.md) | Architecture decision records |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System overview, request + feedback-loop flows, cross-stack references, deploy order |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Prerequisites, bootstrap, deploy order, verification, teardown, troubleshooting |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Complete config reference |
+| [docs/SECURITY.md](docs/SECURITY.md) | Network isolation, IAM least-privilege, encryption, cdk-nag baseline |
+| [docs/ADAPTING.md](docs/ADAPTING.md) | What to keep vs. adapt for your own business |
