@@ -134,9 +134,7 @@ def _mark_error(job_id, now=None):
     """Best-effort: set the job to ERROR with the generic message.
 
     Conditional on the job NOT already being DONE, so a late failure signal can
-    never clobber a reply that already landed. Swallows all exceptions and never
-    raises (a raise here would fail the async invoke and route it to the
-    on-failure destination for no benefit).
+    never clobber a reply that already landed. Best-effort and non-fatal.
     """
     if not job_id:
         return
@@ -162,10 +160,10 @@ def _mark_error(job_id, now=None):
 def handler(event, context):
     """Async worker entry point. Event: {jobId, message, sessionId}.
 
-    Covers in-invocation failures itself (try/except -> job ERROR). Failures
-    that this function can't record — a crash, timeout, or OOM that kills the
-    invocation — are caught by the separate on-failure handler Lambda, which
-    Lambda routes the async failure event to (see ConciergeChatStack).
+    Records in-invocation failures itself (try/except -> job ERROR). DEMO
+    LIMITATION: a failure that kills the invocation outright (crash/timeout/OOM)
+    leaves the job PENDING until its TTL — a production build would add an
+    on-failure destination to mark it ERROR (see ConciergeChatStack / docs).
     """
     job_id = event["jobId"]
     message = (event.get("message") or "").strip()

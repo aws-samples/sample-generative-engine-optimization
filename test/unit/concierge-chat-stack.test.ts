@@ -198,33 +198,32 @@ describe('ConciergeChatStack (async submit/worker/poll chat API)', () => {
     });
   });
 
-  it('creates a SEPARATE on-failure handler Lambda (not the worker itself)', () => {
-    // AWS forbids a function being its own on-failure destination, so the
-    // destination is a dedicated geo-demo-dev-chat-failure function.
-    template.hasResourceProperties('AWS::Lambda::Function', {
-      FunctionName: 'geo-demo-dev-chat-failure',
-      Runtime: 'python3.13',
-      Handler: 'lambda_function.handler',
-      Environment: { Variables: Match.objectLike({ JOBS_TABLE: Match.anyValue() }) },
-    });
-  });
-
-  it('configures the worker async invoke with no retries and an on-failure destination', () => {
-    // retryAttempts 0 (no rerun of the ~49s loop) + onFailure routed to the
-    // dedicated failure handler, which marks the job ERROR instead of leaving
-    // it PENDING when the worker invoke fails outright.
+  it('disables async auto-retry on the worker (no on-failure destination — lean sample)', () => {
+    // retryAttempts 0 so a failure never reruns the ~49s Bedrock loop. The
+    // sample intentionally has NO on-failure destination (that resilience is a
+    // documented production step), so the EventInvokeConfig carries no
+    // DestinationConfig.
     template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', {
       MaximumRetryAttempts: 0,
-      DestinationConfig: { OnFailure: { Destination: Match.anyValue() } },
     });
-    // The on-failure destination resolves (via Fn::GetAtt .Arn) to the SEPARATE
-    // failure handler (ChatFailureFunction), NOT the worker (whose logical id is
-    // ChatFunction<hex>, i.e. "ChatFunction" immediately followed by hex).
     const configs = template.findResources('AWS::Lambda::EventInvokeConfig');
-    const dest = JSON.stringify(
-      Object.values(configs)[0]?.Properties?.DestinationConfig?.OnFailure?.Destination,
-    );
-    expect(dest).toMatch(/ChatFailureFunction[0-9A-F]+/); // GetAtt the failure fn ARN
-    expect(dest).not.toMatch(/ChatFunction[0-9A-F]/); // NOT the worker's logical id
+    for (const c of Object.values(configs)) {
+      expect(c.Properties?.DestinationConfig).toBeUndefined();
+    }
+    // And there is no dedicated chat-failure function.
+    const fns = template.findResources('AWS::Lambda::Function');
+    const names = Object.values(fns).map((f) => f.Properties?.FunctionName);
+    expect(names).not.toContain('geo-demo-dev-chat-failure');
+  });
+
+  it('throttles the chat API stage (demo cost guard; no edge WAF on this API)', () => {
+    template.hasResourceProperties('AWS::ApiGateway::Stage', {
+      MethodSettings: Match.arrayWith([
+        Match.objectLike({
+          ThrottlingRateLimit: Match.anyValue(),
+          ThrottlingBurstLimit: Match.anyValue(),
+        }),
+      ]),
+    });
   });
 });
