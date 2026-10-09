@@ -23,8 +23,10 @@ APIReference):
   * A managed harness is invoked with `invoke_harness` on the DATA-PLANE client
     `bedrock-agentcore` -- NOT `invoke_agent_runtime` (that is for custom
     code-defined runtimes, and raises ValidationException on a harness).
-  * The resource is the HARNESS ARN (arn:...:harness/<name-suffix>), which is the
-    runtime ARN with `runtime/` swapped for `harness/`.
+  * The resource is the HARNESS ARN (arn:...:harness/<name-suffix>). This is a
+    DISTINCT, service-assigned ARN -- NOT the runtime ARN with `runtime/`
+    textually swapped for `harness/` (they carry different ids). Get it from the
+    AiStack `HarnessArn` output (or `bedrock-agentcore list-harnesses`).
   * Input is a `messages` array (Bedrock Converse-style), not a {"prompt": ...} blob.
   * The response is an EventStream in response["stream"]; the reply text arrives
     in `contentBlockDelta.delta.text` events.
@@ -38,15 +40,24 @@ Worker contract:
 
 Env vars:
   HARNESS_ARN       ARN of the geo-concierge harness (arn:...:harness/<name-suffix>).
-                    If you only have the runtime ARN, swap `runtime/`->`harness/`.
+                    This is a distinct service-assigned ARN; take it from the
+                    AiStack `HarnessArn` output, not by editing the runtime ARN.
   JOBS_TABLE        DynamoDB table name for the chat jobs store.
   HARNESS_QUALIFIER Optional endpoint qualifier; omit for DEFAULT.
 """
+import logging
 import os
 import time
 import uuid
 
 import boto3
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Generic, non-sensitive message surfaced to the browser (via the poll endpoint)
+# when the agent fails. Real exception detail is logged to CloudWatch only.
+GENERIC_ERROR = "The concierge is unavailable right now. Please try again."
 
 HARNESS_ARN = os.environ["HARNESS_ARN"]
 JOBS_TABLE = os.environ["JOBS_TABLE"]
@@ -128,14 +139,17 @@ def handler(event, context):
 
     try:
         reply_text, stop_reason = run_agent(message, session_id)
-    except Exception as exc:
+    except Exception:
+        # Log the real detail to CloudWatch; never surface str(exc) to the
+        # browser (this is a public, unauthenticated endpoint).
+        logger.exception("Agent run failed for job %s", job_id)
         _table.update_item(
             Key={"jobId": job_id},
             UpdateExpression="SET #s = :s, #e = :e, finishedAt = :f",
             ExpressionAttributeNames={"#s": "status", "#e": "error"},
             ExpressionAttributeValues={
                 ":s": "ERROR",
-                ":e": str(exc)[:500],
+                ":e": GENERIC_ERROR,
                 ":f": now,
             },
         )

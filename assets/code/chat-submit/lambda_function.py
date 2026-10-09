@@ -37,11 +37,15 @@ Env vars:
   MAX_MESSAGE_CHARS    Optional; default 500.
 """
 import json
+import logging
 import os
 import time
 import uuid
 
 import boto3
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 JOBS_TABLE = os.environ["JOBS_TABLE"]
 WORKER_FUNCTION_NAME = os.environ["WORKER_FUNCTION_NAME"]
@@ -88,11 +92,11 @@ def handler(event, context):
         return _resp(400, {"error": "message_too_long",
                            "message": f"Message exceeds {MAX_MESSAGE_CHARS} characters."})
 
-    # runtimeSessionId must be >= 33 chars (AgentCore requirement). Reuse the
-    # same id across turns to continue a session; here each request is stateless.
-    session_id = payload.get("sessionId") or f"onsite-{uuid.uuid4().hex}-{uuid.uuid4().hex}"
-    if len(session_id) < 33:
-        session_id = (session_id + "-" + uuid.uuid4().hex)[:64]
+    # Generate the runtimeSessionId SERVER-SIDE and ignore any client-supplied
+    # value: this is a public, unauthenticated endpoint, so the caller must not
+    # be able to choose/replay AgentCore session ids. (>= 33 chars per the
+    # AgentCore requirement.) Each request is stateless.
+    session_id = f"onsite-{uuid.uuid4().hex}-{uuid.uuid4().hex}"
 
     job_id = uuid.uuid4().hex
     now = int(time.time())
@@ -116,9 +120,25 @@ def handler(event, context):
                 "sessionId": session_id,
             }).encode("utf-8"),
         )
-    except Exception as exc:  # surface a clean error to the widget
+    except Exception:
+        # The worker never started, so the PENDING row we just wrote would be
+        # stuck forever. Mark it ERROR so the browser's poll resolves cleanly.
+        # Log the real detail to CloudWatch; return a generic message only.
+        logger.exception("Worker invoke failed for job %s", job_id)
+        try:
+            _table.update_item(
+                Key={"jobId": job_id},
+                UpdateExpression="SET #s = :s, #e = :e, finishedAt = :f",
+                ExpressionAttributeNames={"#s": "status", "#e": "error"},
+                ExpressionAttributeValues={
+                    ":s": "ERROR",
+                    ":e": "The concierge is unavailable right now. Please try again.",
+                    ":f": int(time.time()),
+                },
+            )
+        except Exception:
+            logger.exception("Failed to mark job %s ERROR after invoke failure", job_id)
         return _resp(502, {"error": "worker_invoke_failed",
-                           "message": "The concierge is unavailable right now.",
-                           "detail": str(exc)[:300]})
+                           "message": "The concierge is unavailable right now. Please try again."})
 
     return _resp(202, {"jobId": job_id, "status": "PENDING"})
