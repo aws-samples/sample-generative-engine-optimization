@@ -8,7 +8,7 @@ import { App } from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { getConfig, type AppConfig } from '../../lib/config/index.js';
 import { ConciergeChatStack } from '../../lib/stacks/index.js';
-import { TEST_ENV } from './helpers.js';
+import { TEST_ENV, expectedContentBucketName } from './helpers.js';
 
 const FAKE_HARNESS_ARN =
   'arn:aws:bedrock-agentcore:us-east-1:123456789012:harness/geo_concierge-abc123';
@@ -24,7 +24,8 @@ function synth(context: Record<string, unknown> = {}): Template {
     harnessArn: FAKE_HARNESS_ARN,
     cloudFrontDomainName: FAKE_CF_DOMAIN,
     chatCodeDir: path.resolve(process.cwd(), 'assets', 'code', 'chat-endpoint'),
-    contentBucketName: 'geo-demo-dev-content-123456789012-ca-central-1',
+    // Derived, not a hard-coded literal — avoids a copy-pasteable/squattable name.
+    contentBucketName: expectedContentBucketName(config.prefix, TEST_ENV),
     distributionId: 'E1234567890ABC',
   });
   return Template.fromStack(stack);

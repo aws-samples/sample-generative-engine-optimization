@@ -23,3 +23,18 @@ export function testAppConfig(context: Record<string, unknown> = {}): {
   const config: AppConfig = { ...getConfig(app), env: TEST_ENV };
   return { app, config };
 }
+
+/**
+ * The content bucket name the ContentStorage construct produces, derived from
+ * the same inputs the construct uses (`${prefix}-content-${account}-${region}`).
+ *
+ * Tests assert against this COMPUTED value rather than a hard-coded literal, so
+ * no copy-pasteable, squattable bucket name appears in the source (per the AWS
+ * "example bucket naming" convention). Defaults to the TEST_ENV account/region.
+ */
+export function expectedContentBucketName(
+  prefix = 'geo-demo-dev',
+  env: { account?: string; region?: string } = TEST_ENV,
+): string {
+  return `${prefix}-content-${env.account}-${env.region}`;
+}
