@@ -10,7 +10,7 @@ import { App, Stack } from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { getConfig, type AppConfig } from '../../lib/config/index.js';
 import { ContentStorage } from '../../lib/constructs/content-storage.js';
-import { TEST_ENV } from './helpers.js';
+import { TEST_ENV, expectedContentBucketName } from './helpers.js';
 
 function cfg(context: Record<string, unknown> = {}): AppConfig {
   const app = new App({ context });
@@ -41,8 +41,10 @@ describe('ContentStorage construct', () => {
 
   it('creates exactly one bucket with the deterministic name', () => {
     template.resourceCountIs('AWS::S3::Bucket', 1);
+    // Assert the COMPUTED name (prefix-content-account-region), not a hard-coded
+    // literal, so no copy-pasteable/squattable bucket name lives in the source.
     template.hasResourceProperties('AWS::S3::Bucket', {
-      BucketName: 'geo-demo-dev-content-123456789012-us-east-1',
+      BucketName: expectedContentBucketName('geo-demo-dev', TEST_ENV),
     });
   });
 

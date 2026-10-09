@@ -10,7 +10,7 @@ import { App } from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { getConfig, type AppConfig } from '../../lib/config/index.js';
 import { StorageStack } from '../../lib/stacks/index.js';
-import { TEST_ENV, testAppConfig } from './helpers.js';
+import { TEST_ENV, testAppConfig, expectedContentBucketName } from './helpers.js';
 
 function synth(context: Record<string, unknown> = {}): Template {
   const { app, config } = testAppConfig(context);
@@ -26,8 +26,10 @@ describe('StorageStack (single S3 bucket)', () => {
   });
 
   it('uses a collision-safe deterministic name (geo-demo-content-<account>-<region>)', () => {
+    // Assert the COMPUTED name (prefix-content-account-region), not a hard-coded
+    // literal, so no copy-pasteable/squattable bucket name lives in the source.
     template.hasResourceProperties('AWS::S3::Bucket', {
-      BucketName: 'geo-demo-dev-content-123456789012-us-east-1',
+      BucketName: expectedContentBucketName('geo-demo-dev', TEST_ENV),
     });
   });
 
