@@ -134,6 +134,18 @@ export class ConciergeChatStack extends Stack {
     // Worker writes job results back (UpdateItem on success/failure).
     jobsTable.grantWriteData(worker);
 
+    // No async auto-retry: a retry would rerun the whole ~49s Bedrock loop. The
+    // handler records in-invocation failures itself (try/except -> job ERROR).
+    //
+    // DEMO LIMITATION (intentional): if the worker invocation fails OUTRIGHT
+    // (crash / timeout / OOM) before its handler can write, the job stays
+    // PENDING until its ~1h TTL and the browser's poll simply times out. A
+    // production build would add an on-failure destination (a separate Lambda —
+    // AWS forbids a function being its own destination) to mark such jobs ERROR.
+    // That resilience plumbing is out of scope for this reference sample; see
+    // the "Productionization" notes in docs/.
+    worker.configureAsyncInvoke({ retryAttempts: 0 });
+
     // --- SUBMIT: records a PENDING job, fires the worker, returns 202 ------
     const submit = new lambda.Function(this, 'ChatSubmitFunction', {
       functionName: `${prefix}-chat-submit`,
@@ -191,6 +203,12 @@ export class ConciergeChatStack extends Stack {
         accessLogDestination: new apigateway.LogGroupLogDestination(apiAccessLogs),
         accessLogFormat: apigateway.AccessLogFormat.jsonWithStandardFields(),
         loggingLevel: apigateway.MethodLoggingLevel.INFO,
+        // Stage-level throttling so a runaway client can't rack up Bedrock cost
+        // via the worker. Reuses the data API's limits (config.compute). This
+        // API is not behind CloudFront, so there's no edge WAF; a production
+        // build would add API-level WAF — see the "Productionization" notes.
+        throttlingRateLimit: config.compute.apiThrottleRateLimit,
+        throttlingBurstLimit: config.compute.apiThrottleBurstLimit,
       },
       defaultCorsPreflightOptions: {
         allowOrigins: [allowedOrigin],

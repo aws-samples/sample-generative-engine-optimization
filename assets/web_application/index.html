@@ -353,7 +353,7 @@
       form=document.getElementById("oc-form"),
       input=document.getElementById("oc-input"),
       send=document.getElementById("oc-send"),
-      sessionId=null, greeted=false;
+      greeted=false;
   function addMsg(text, cls){
     var d=document.createElement("div");
     d.className="oc-msg "+cls; d.textContent=text;
@@ -416,13 +416,13 @@
     fetch(chatUrl(),{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({message:msg, sessionId:sessionId})
+      // sessionId is assigned SERVER-SIDE (the submit endpoint ignores any
+      // client-supplied value), so we send only the message.
+      body:JSON.stringify({message:msg})
     })
     .then(function(r){ return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
     .then(function(res){
       if(res.ok && res.j && res.j.jobId){
-        // Reuse the server-assigned session across turns if provided.
-        sessionId=res.j.sessionId||sessionId;
         // 2) Poll for the result.
         pollJob(res.j.jobId, typing, Date.now());
       }else{

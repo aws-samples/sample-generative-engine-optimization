@@ -197,4 +197,33 @@ describe('ConciergeChatStack (async submit/worker/poll chat API)', () => {
       DistributionPaths: ['/chat-config.json'],
     });
   });
+
+  it('disables async auto-retry on the worker (no on-failure destination — lean sample)', () => {
+    // retryAttempts 0 so a failure never reruns the ~49s Bedrock loop. The
+    // sample intentionally has NO on-failure destination (that resilience is a
+    // documented production step), so the EventInvokeConfig carries no
+    // DestinationConfig.
+    template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', {
+      MaximumRetryAttempts: 0,
+    });
+    const configs = template.findResources('AWS::Lambda::EventInvokeConfig');
+    for (const c of Object.values(configs)) {
+      expect(c.Properties?.DestinationConfig).toBeUndefined();
+    }
+    // And there is no dedicated chat-failure function.
+    const fns = template.findResources('AWS::Lambda::Function');
+    const names = Object.values(fns).map((f) => f.Properties?.FunctionName);
+    expect(names).not.toContain('geo-demo-dev-chat-failure');
+  });
+
+  it('throttles the chat API stage (demo cost guard; no edge WAF on this API)', () => {
+    template.hasResourceProperties('AWS::ApiGateway::Stage', {
+      MethodSettings: Match.arrayWith([
+        Match.objectLike({
+          ThrottlingRateLimit: Match.anyValue(),
+          ThrottlingBurstLimit: Match.anyValue(),
+        }),
+      ]),
+    });
+  });
 });

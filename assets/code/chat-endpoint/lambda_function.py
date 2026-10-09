@@ -23,8 +23,10 @@ APIReference):
   * A managed harness is invoked with `invoke_harness` on the DATA-PLANE client
     `bedrock-agentcore` -- NOT `invoke_agent_runtime` (that is for custom
     code-defined runtimes, and raises ValidationException on a harness).
-  * The resource is the HARNESS ARN (arn:...:harness/<name-suffix>), which is the
-    runtime ARN with `runtime/` swapped for `harness/`.
+  * The resource is the HARNESS ARN (arn:...:harness/<name-suffix>). This is a
+    DISTINCT, service-assigned ARN -- NOT the runtime ARN with `runtime/`
+    textually swapped for `harness/` (they carry different ids). Get it from the
+    AiStack `HarnessArn` output (or `bedrock-agentcore list-harnesses`).
   * Input is a `messages` array (Bedrock Converse-style), not a {"prompt": ...} blob.
   * The response is an EventStream in response["stream"]; the reply text arrives
     in `contentBlockDelta.delta.text` events.
@@ -38,15 +40,24 @@ Worker contract:
 
 Env vars:
   HARNESS_ARN       ARN of the geo-concierge harness (arn:...:harness/<name-suffix>).
-                    If you only have the runtime ARN, swap `runtime/`->`harness/`.
+                    This is a distinct service-assigned ARN; take it from the
+                    AiStack `HarnessArn` output, not by editing the runtime ARN.
   JOBS_TABLE        DynamoDB table name for the chat jobs store.
   HARNESS_QUALIFIER Optional endpoint qualifier; omit for DEFAULT.
 """
+import logging
 import os
 import time
 import uuid
 
 import boto3
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Generic, non-sensitive message surfaced to the browser (via the poll endpoint)
+# when the agent fails. Real exception detail is logged to CloudWatch only.
+GENERIC_ERROR = "The concierge is unavailable right now. Please try again."
 
 HARNESS_ARN = os.environ["HARNESS_ARN"]
 JOBS_TABLE = os.environ["JOBS_TABLE"]
@@ -119,8 +130,41 @@ def run_agent(message, session_id):
     return reply_text, stop_reason
 
 
+def _mark_error(job_id, now=None):
+    """Best-effort: set the job to ERROR with the generic message.
+
+    Conditional on the job NOT already being DONE, so a late failure signal can
+    never clobber a reply that already landed. Best-effort and non-fatal.
+    """
+    if not job_id:
+        return
+    try:
+        _table.update_item(
+            Key={"jobId": job_id},
+            UpdateExpression="SET #s = :s, #e = :e, finishedAt = :f",
+            ConditionExpression="attribute_not_exists(#s) OR #s <> :done",
+            ExpressionAttributeNames={"#s": "status", "#e": "error"},
+            ExpressionAttributeValues={
+                ":s": "ERROR",
+                ":e": GENERIC_ERROR,
+                ":f": now if now is not None else int(time.time()),
+                ":done": "DONE",
+            },
+        )
+    except Exception:
+        # Includes ConditionalCheckFailedException (job already DONE) and any
+        # transient write error. Log and move on; must not propagate.
+        logger.warning("Could not mark job %s ERROR (may already be DONE)", job_id)
+
+
 def handler(event, context):
-    """Async worker entry point. Event: {jobId, message, sessionId}."""
+    """Async worker entry point. Event: {jobId, message, sessionId}.
+
+    Records in-invocation failures itself (try/except -> job ERROR). DEMO
+    LIMITATION: a failure that kills the invocation outright (crash/timeout/OOM)
+    leaves the job PENDING until its TTL — a production build would add an
+    on-failure destination to mark it ERROR (see ConciergeChatStack / docs).
+    """
     job_id = event["jobId"]
     message = (event.get("message") or "").strip()
     session_id = event.get("sessionId")
@@ -128,17 +172,11 @@ def handler(event, context):
 
     try:
         reply_text, stop_reason = run_agent(message, session_id)
-    except Exception as exc:
-        _table.update_item(
-            Key={"jobId": job_id},
-            UpdateExpression="SET #s = :s, #e = :e, finishedAt = :f",
-            ExpressionAttributeNames={"#s": "status", "#e": "error"},
-            ExpressionAttributeValues={
-                ":s": "ERROR",
-                ":e": str(exc)[:500],
-                ":f": now,
-            },
-        )
+    except Exception:
+        # Log the real detail to CloudWatch; never surface str(exc) to the
+        # browser (this is a public, unauthenticated endpoint).
+        logger.exception("Agent run failed for job %s", job_id)
+        _mark_error(job_id, now)
         return {"jobId": job_id, "status": "ERROR"}
 
     _table.update_item(

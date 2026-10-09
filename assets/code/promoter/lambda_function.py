@@ -52,8 +52,10 @@ import boto3
 
 CONTENT_BUCKET = os.environ["CONTENT_BUCKET"]
 DISTRIBUTION_ID = os.environ.get("DISTRIBUTION_ID", "")
-# CloudFront origin path prefix — stripped from the S3 key to form the PUBLIC invalidation path.
-ORIGIN_PATH_PREFIX = os.environ.get("ORIGIN_PATH_PREFIX", "web-application/")
+# CloudFront origin path prefix — stripped from the S3 key to form the PUBLIC
+# invalidation path. Default matches STORAGE_PREFIXES.webApplication (the value
+# the ComputeStack injects); keep them in sync.
+ORIGIN_PATH_PREFIX = os.environ.get("ORIGIN_PATH_PREFIX", "web_application/")
 CW_NAMESPACE = os.environ.get("CW_NAMESPACE", "GEO/CitationTracker")
 
 s3 = boto3.client("s3")
@@ -103,7 +105,7 @@ def lambda_handler(event, context):
         f"aws s3 cp s3://{CONTENT_BUCKET}/{staged_key} s3://{CONTENT_BUCKET}/{live_key} "
         f"--content-type text/html"
     )
-    # The public CloudFront path strips the origin-path prefix (e.g. web-application/).
+    # The public CloudFront path strips the origin-path prefix (e.g. web_application/).
     public_path = live_key[len(ORIGIN_PATH_PREFIX):] if live_key.startswith(ORIGIN_PATH_PREFIX) else live_key
     manual_invalidate = (
         f"aws cloudfront create-invalidation --distribution-id {DISTRIBUTION_ID or '<DIST_ID>'} "

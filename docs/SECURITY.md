@@ -134,6 +134,32 @@ production:
 6. **Lambda / API Gateway logs stay in CloudWatch.** S3 isn't a valid direct
    destination; an export pipeline is deferred (see [DEPLOYMENT.md](DEPLOYMENT.md)).
 
+## Productionization: concierge chat
+
+The async submit/poll chat (`ConciergeChatStack`) is a **reference sample**, not
+a production service. It ships the correctness/safety basics — public-endpoint
+hygiene (generic errors, server-side session ids, request validation + length
+cap), stage access/exec logging, stage **throttling** (a cost guard against a
+runaway client driving the ~49s Bedrock worker), and `retryAttempts: 0` so a
+failure never reruns the expensive loop. The following are **intentionally left
+out** and are the steps you'd add for production:
+
+1. **Worker on-failure resilience.** The worker records in-invocation failures
+   itself, but a failure that kills the invocation outright (crash / timeout /
+   OOM) leaves the job `PENDING` until its ~1h TTL (the browser poll just times
+   out). Add a Lambda **on-failure destination** — a *separate* function; AWS
+   rejects a function as its own destination — that marks such jobs `ERROR`.
+2. **Alarms.** No CloudWatch alarms are defined. Add alarms for worker `Errors`
+   and `Duration`, `AsyncEventsDropped`, `Throttles`, and API Gateway `5XXError`,
+   wired to an SNS topic, so operators learn of failures the demo surfaces only
+   via a timed-out poll.
+3. **WAF.** The chat API is a regional API Gateway endpoint **not** behind
+   CloudFront, so the edge is not WAF-protected. Add an API-level `WebACL`
+   (or route `/chat` through CloudFront) for rate/abuse protection beyond the
+   stage throttling.
+4. **Auth.** The endpoint is intentionally public/unauthenticated for the demo
+   widget; add an authorizer / API key / usage plan if it should not be open.
+
 ## Guardrail: data teardown
 
 `retainData` controls whether stateful resources survive `cdk destroy`. For any
