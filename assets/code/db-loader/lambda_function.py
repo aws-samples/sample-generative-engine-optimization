@@ -182,7 +182,8 @@ def _send(event, context, status, data, physical_id, reason=None):
     req = urllib.request.Request(
         response_url, data=body, method="PUT", headers={"content-type": ""}
     )
-    urllib.request.urlopen(req)  # noqa: S310 (validated https CFN pre-signed URL)
+    # https:// validated above; CFN-generated pre-signed URL is trusted.
+    urllib.request.urlopen(req)  # nosec B310  # noqa: S310
 
 
 def lambda_handler(event, context):
