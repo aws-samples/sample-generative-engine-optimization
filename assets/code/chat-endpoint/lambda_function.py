@@ -130,8 +130,61 @@ def run_agent(message, session_id):
     return reply_text, stop_reason
 
 
+def _mark_error(job_id, now=None):
+    """Best-effort: set the job to ERROR with the generic message.
+
+    Conditional on the job NOT already being DONE, so a late failure signal can
+    never clobber a reply that already landed. Swallows all exceptions and never
+    raises — critical for the on-failure path (see handler): if this write threw,
+    the invocation would itself fail async and Lambda would route it back to the
+    on-failure destination (this same function), risking a self-invocation loop.
+    """
+    if not job_id:
+        return
+    try:
+        _table.update_item(
+            Key={"jobId": job_id},
+            UpdateExpression="SET #s = :s, #e = :e, finishedAt = :f",
+            ConditionExpression="attribute_not_exists(#s) OR #s <> :done",
+            ExpressionAttributeNames={"#s": "status", "#e": "error"},
+            ExpressionAttributeValues={
+                ":s": "ERROR",
+                ":e": GENERIC_ERROR,
+                ":f": now if now is not None else int(time.time()),
+                ":done": "DONE",
+            },
+        )
+    except Exception:
+        # Includes ConditionalCheckFailedException (job already DONE) and any
+        # transient write error. Log and move on; must not propagate.
+        logger.warning("Could not mark job %s ERROR (may already be DONE)", job_id)
+
+
 def handler(event, context):
-    """Async worker entry point. Event: {jobId, message, sessionId}."""
+    """Async worker entry point.
+
+    Two invocation shapes:
+      1. Normal turn (from the submit Lambda): {jobId, message, sessionId}.
+      2. On-FAILURE destination re-invoke: Lambda routes a failed async
+         invocation of THIS function back here with an async failure ENVELOPE
+         ({requestContext, requestPayload, responsePayload, ...}). We detect
+         that, mark the original job ERROR, and return cleanly so the failure
+         path itself never fails (which would loop back into this destination).
+    """
+    # --- On-failure destination branch -------------------------------------
+    if isinstance(event, dict) and "requestContext" in event and "requestPayload" in event:
+        original = event.get("requestPayload") or {}
+        job_id = original.get("jobId") if isinstance(original, dict) else None
+        condition = (event.get("requestContext") or {}).get("condition")
+        logger.warning(
+            "Async invoke failed (condition=%s); marking job %s ERROR", condition, job_id
+        )
+        _mark_error(job_id)
+        # Return a normal (non-error) result so this invocation succeeds and is
+        # NOT routed back to the on-failure destination.
+        return {"jobId": job_id, "status": "ERROR", "handledAs": "onFailure"}
+
+    # --- Normal turn -------------------------------------------------------
     job_id = event["jobId"]
     message = (event.get("message") or "").strip()
     session_id = event.get("sessionId")
@@ -143,16 +196,7 @@ def handler(event, context):
         # Log the real detail to CloudWatch; never surface str(exc) to the
         # browser (this is a public, unauthenticated endpoint).
         logger.exception("Agent run failed for job %s", job_id)
-        _table.update_item(
-            Key={"jobId": job_id},
-            UpdateExpression="SET #s = :s, #e = :e, finishedAt = :f",
-            ExpressionAttributeNames={"#s": "status", "#e": "error"},
-            ExpressionAttributeValues={
-                ":s": "ERROR",
-                ":e": GENERIC_ERROR,
-                ":f": now,
-            },
-        )
+        _mark_error(job_id, now)
         return {"jobId": job_id, "status": "ERROR"}
 
     _table.update_item(

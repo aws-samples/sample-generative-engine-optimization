@@ -197,4 +197,30 @@ describe('ConciergeChatStack (async submit/worker/poll chat API)', () => {
       DistributionPaths: ['/chat-config.json'],
     });
   });
+
+  it('configures the worker async invoke with no retries and a self on-failure destination', () => {
+    // retryAttempts 0 (no rerun of the ~49s loop) + onFailure = the worker
+    // itself, so a failed/crashed/timed-out async invoke is routed back to the
+    // worker (failure-envelope branch) which marks the job ERROR instead of
+    // leaving it PENDING.
+    template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', {
+      MaximumRetryAttempts: 0,
+      DestinationConfig: { OnFailure: { Destination: Match.anyValue() } },
+    });
+    // The on-failure destination ARN resolves to the worker itself: it is a
+    // Lambda function ARN that Refs the ChatFunction resource (the worker).
+    const configs = template.findResources('AWS::Lambda::EventInvokeConfig');
+    const dest = JSON.stringify(
+      Object.values(configs)[0]?.Properties?.DestinationConfig?.OnFailure?.Destination,
+    );
+    expect(dest).toContain(':function:');
+    expect(dest).toMatch(/ChatFunction[0-9A-F]+/); // Ref to the worker's logical id
+  });
+
+  it('authorizes the self on-failure invoke via a resource policy (no role-policy cycle)', () => {
+    template.hasResourceProperties('AWS::Lambda::Permission', {
+      Action: 'lambda:InvokeFunction',
+      Principal: 'lambda.amazonaws.com',
+    });
+  });
 });
