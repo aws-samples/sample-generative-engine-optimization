@@ -198,29 +198,33 @@ describe('ConciergeChatStack (async submit/worker/poll chat API)', () => {
     });
   });
 
-  it('configures the worker async invoke with no retries and a self on-failure destination', () => {
-    // retryAttempts 0 (no rerun of the ~49s loop) + onFailure = the worker
-    // itself, so a failed/crashed/timed-out async invoke is routed back to the
-    // worker (failure-envelope branch) which marks the job ERROR instead of
-    // leaving it PENDING.
+  it('creates a SEPARATE on-failure handler Lambda (not the worker itself)', () => {
+    // AWS forbids a function being its own on-failure destination, so the
+    // destination is a dedicated geo-demo-dev-chat-failure function.
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      FunctionName: 'geo-demo-dev-chat-failure',
+      Runtime: 'python3.13',
+      Handler: 'lambda_function.handler',
+      Environment: { Variables: Match.objectLike({ JOBS_TABLE: Match.anyValue() }) },
+    });
+  });
+
+  it('configures the worker async invoke with no retries and an on-failure destination', () => {
+    // retryAttempts 0 (no rerun of the ~49s loop) + onFailure routed to the
+    // dedicated failure handler, which marks the job ERROR instead of leaving
+    // it PENDING when the worker invoke fails outright.
     template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', {
       MaximumRetryAttempts: 0,
       DestinationConfig: { OnFailure: { Destination: Match.anyValue() } },
     });
-    // The on-failure destination ARN resolves to the worker itself: it is a
-    // Lambda function ARN that Refs the ChatFunction resource (the worker).
+    // The on-failure destination resolves (via Fn::GetAtt .Arn) to the SEPARATE
+    // failure handler (ChatFailureFunction), NOT the worker (whose logical id is
+    // ChatFunction<hex>, i.e. "ChatFunction" immediately followed by hex).
     const configs = template.findResources('AWS::Lambda::EventInvokeConfig');
     const dest = JSON.stringify(
       Object.values(configs)[0]?.Properties?.DestinationConfig?.OnFailure?.Destination,
     );
-    expect(dest).toContain(':function:');
-    expect(dest).toMatch(/ChatFunction[0-9A-F]+/); // Ref to the worker's logical id
-  });
-
-  it('authorizes the self on-failure invoke via a resource policy (no role-policy cycle)', () => {
-    template.hasResourceProperties('AWS::Lambda::Permission', {
-      Action: 'lambda:InvokeFunction',
-      Principal: 'lambda.amazonaws.com',
-    });
+    expect(dest).toMatch(/ChatFailureFunction[0-9A-F]+/); // GetAtt the failure fn ARN
+    expect(dest).not.toMatch(/ChatFunction[0-9A-F]/); // NOT the worker's logical id
   });
 });

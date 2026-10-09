@@ -4,11 +4,12 @@
  */
 
 import * as path from 'node:path';
-import { ArnFormat, CfnOutput, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import { CfnOutput, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as destinations from 'aws-cdk-lib/aws-lambda-destinations';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
@@ -122,43 +123,6 @@ export class ConciergeChatStack extends Stack {
       },
     });
 
-    // Async invoke config for the worker:
-    //  - retryAttempts: 0 — do NOT auto-retry; a retry would rerun the whole
-    //    ~49s Bedrock loop.
-    //  - onFailure = the worker ITSELF. When an async invocation fails (handler
-    //    crash, timeout, OOM, or an uncaught error — the cases the handler's own
-    //    try/except can't record), Lambda re-invokes this function with an async
-    //    failure ENVELOPE. The handler detects that shape and marks the original
-    //    job ERROR, so a failed turn never lingers as PENDING. The handler's
-    //    failure branch never raises, so this cannot form a self-invocation loop.
-    //
-    // Cycle-avoidance: the L2 `LambdaDestination`/`configureAsyncInvoke` helper
-    // grants invoke on the worker INTO the worker's own execution-role policy,
-    // while the EventInvokeConfig depends on that policy — a circular dependency
-    // CloudFormation rejects when a function is its own on-failure destination.
-    // We therefore wire it with the L1 `CfnEventInvokeConfig` directly (no role
-    // grant), and authorize the delivery via a RESOURCE policy (addPermission),
-    // which does not touch the execution role, so there is no cycle.
-    const workerArn = Stack.of(this).formatArn({
-      service: 'lambda',
-      resource: 'function',
-      resourceName: worker.functionName,
-      arnFormat: ArnFormat.COLON_RESOURCE_NAME,
-    });
-    worker.addPermission('AllowSelfOnFailureInvoke', {
-      principal: new iam.ServicePrincipal('lambda.amazonaws.com'),
-      action: 'lambda:InvokeFunction',
-      sourceArn: workerArn,
-    });
-    new lambda.CfnEventInvokeConfig(this, 'WorkerAsyncInvokeConfig', {
-      functionName: worker.functionName,
-      qualifier: '$LATEST',
-      maximumRetryAttempts: 0,
-      destinationConfig: {
-        onFailure: { destination: workerArn },
-      },
-    });
-
     // Both actions are required to invoke the managed harness; scoped to the
     // single harness ARN (NOT a wildcard).
     worker.addToRolePolicy(
@@ -170,6 +134,34 @@ export class ConciergeChatStack extends Stack {
     );
     // Worker writes job results back (UpdateItem on success/failure).
     jobsTable.grantWriteData(worker);
+
+    // --- ON-FAILURE handler: marks the job ERROR when the worker async invoke
+    // fails outright (crash / timeout / OOM — the cases the worker's own
+    // try/except can't record), so a failed turn never lingers as PENDING.
+    // MUST be a SEPARATE function: AWS Lambda forbids a function from being its
+    // own on-failure destination ("You can't specify the function as a
+    // destination for itself"). Short timeout; it only does one DynamoDB write.
+    const failureCodeDir = path.resolve(chatCodeDir, '..', 'chat-failure');
+    const onFailureFn = new lambda.Function(this, 'ChatFailureFunction', {
+      functionName: `${prefix}-chat-failure`,
+      runtime: lambda.Runtime.PYTHON_3_13,
+      handler: 'lambda_function.handler',
+      code: lambda.Code.fromAsset(failureCodeDir),
+      memorySize: 128,
+      timeout: Duration.seconds(15),
+      logGroup: this.logGroupFor('ChatFailureLogGroup', `${prefix}-chat-failure`, config.retainData),
+      environment: {
+        JOBS_TABLE: jobsTable.tableName,
+      },
+    });
+    jobsTable.grantWriteData(onFailureFn);
+
+    // Worker async invoke config: no auto-retry (a retry reruns the whole ~49s
+    // Bedrock loop), and route ultimate failures to the dedicated handler above.
+    worker.configureAsyncInvoke({
+      retryAttempts: 0,
+      onFailure: new destinations.LambdaDestination(onFailureFn),
+    });
 
     // --- SUBMIT: records a PENDING job, fires the worker, returns 202 ------
     const submit = new lambda.Function(this, 'ChatSubmitFunction', {

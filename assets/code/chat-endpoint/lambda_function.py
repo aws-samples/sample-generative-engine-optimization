@@ -135,9 +135,8 @@ def _mark_error(job_id, now=None):
 
     Conditional on the job NOT already being DONE, so a late failure signal can
     never clobber a reply that already landed. Swallows all exceptions and never
-    raises — critical for the on-failure path (see handler): if this write threw,
-    the invocation would itself fail async and Lambda would route it back to the
-    on-failure destination (this same function), risking a self-invocation loop.
+    raises (a raise here would fail the async invoke and route it to the
+    on-failure destination for no benefit).
     """
     if not job_id:
         return
@@ -161,30 +160,13 @@ def _mark_error(job_id, now=None):
 
 
 def handler(event, context):
-    """Async worker entry point.
+    """Async worker entry point. Event: {jobId, message, sessionId}.
 
-    Two invocation shapes:
-      1. Normal turn (from the submit Lambda): {jobId, message, sessionId}.
-      2. On-FAILURE destination re-invoke: Lambda routes a failed async
-         invocation of THIS function back here with an async failure ENVELOPE
-         ({requestContext, requestPayload, responsePayload, ...}). We detect
-         that, mark the original job ERROR, and return cleanly so the failure
-         path itself never fails (which would loop back into this destination).
+    Covers in-invocation failures itself (try/except -> job ERROR). Failures
+    that this function can't record — a crash, timeout, or OOM that kills the
+    invocation — are caught by the separate on-failure handler Lambda, which
+    Lambda routes the async failure event to (see ConciergeChatStack).
     """
-    # --- On-failure destination branch -------------------------------------
-    if isinstance(event, dict) and "requestContext" in event and "requestPayload" in event:
-        original = event.get("requestPayload") or {}
-        job_id = original.get("jobId") if isinstance(original, dict) else None
-        condition = (event.get("requestContext") or {}).get("condition")
-        logger.warning(
-            "Async invoke failed (condition=%s); marking job %s ERROR", condition, job_id
-        )
-        _mark_error(job_id)
-        # Return a normal (non-error) result so this invocation succeeds and is
-        # NOT routed back to the on-failure destination.
-        return {"jobId": job_id, "status": "ERROR", "handledAs": "onFailure"}
-
-    # --- Normal turn -------------------------------------------------------
     job_id = event["jobId"]
     message = (event.get("message") or "").strip()
     session_id = event.get("sessionId")
