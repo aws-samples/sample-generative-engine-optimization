@@ -142,7 +142,13 @@ hygiene (generic errors, server-side session ids, request validation + length
 cap), stage access/exec logging, stage **throttling** (a cost guard against a
 runaway client driving the ~49s Bedrock worker), and `retryAttempts: 0` so a
 failure never reruns the expensive loop. The following are **intentionally left
-out** and are the steps you'd add for production:
+out** and are the steps you'd add for production.
+
+> For the full LLM- and public-endpoint-specific checklist (prompt injection,
+> denial-of-wallet, excessive agency, hallucination, and what the sample already
+> handles), see the
+> [LLM-specific Production Hardening Guide](GEO%20Blog%20-%20LLM%20specific%20Production%20Hardening%20Guide.md).
+> The summary below is the short version.
 
 1. **Worker on-failure resilience.** The worker records in-invocation failures
    itself, but a failure that kills the invocation outright (crash / timeout /

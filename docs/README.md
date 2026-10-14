@@ -11,6 +11,7 @@ the [project README](../README.md) for a high-level overview, then dive in:
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Prerequisites, bootstrap, build/test/synth, deploy order, the two-phase `distributionId` step, verification, log locations, teardown, and troubleshooting. |
 | [CONFIGURATION.md](CONFIGURATION.md) | Complete config reference — every context key, default, and validation rule; how resolution and overrides work; storage prefixes. |
 | [SECURITY.md](SECURITY.md) | Network isolation, per-Lambda IAM least-privilege, encryption, secrets, the cdk-nag baseline with every suppression justified, and prototype trade-offs. |
+| [GEO Blog - LLM specific Production Hardening Guide.md](GEO%20Blog%20-%20LLM%20specific%20Production%20Hardening%20Guide.md) | Pre-production checklist for the public concierge chat — the LLM/public-endpoint risks (prompt injection, denial-of-wallet, excessive agency, info disclosure) that code scanners miss, what to do about each, and what the sample already handles. |
 | [ADAPTING.md](ADAPTING.md) | What you keep vs. what you adapt for your own business — the exact code slots to change (`_FIX_KEYWORDS`, page resolution, `FIX_MAP`, prompts), config-only knobs, and notes on the sample data. |
 
 ## Quick links
