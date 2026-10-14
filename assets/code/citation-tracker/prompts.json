@@ -1,6 +1,7 @@
 {
     "brand": "Octank Hospitality",
     "domain": "octank-hotels.example.com",
+    "default_patch_slug": "octank-inn-colorado-springs",
     "match_terms": [
       "Octank Hospitality",
       "Octank Hotels",
