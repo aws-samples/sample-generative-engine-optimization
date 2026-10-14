@@ -119,6 +119,13 @@ export interface ComputeConfig {
   readonly metricsNamespace: string;
   /** Bedrock model id used by the citation tracker. */
   readonly bedrockModelId: string;
+  /**
+   * Citation-tracker scoring mode: 'brand_mention' (cold training-recall
+   * baseline) or 'grounded' (score how well the model answers from the
+   * property's JSON-LD; mirrors retrieval/RAG and lets a staged fix show a
+   * real improvement). Default 'grounded'.
+   */
+  readonly citationScoreMode: string;
 }
 
 /**
@@ -271,6 +278,7 @@ export const COMPUTE_DEFAULTS: ComputeConfig = {
   apiThrottleBurstLimit: 100,
   metricsNamespace: 'GEO/CitationTracker',
   bedrockModelId: 'global.anthropic.claude-sonnet-4-6',
+  citationScoreMode: 'grounded',
 };
 
 /**
@@ -601,6 +609,9 @@ function resolveCompute(source?: ContextSource): ComputeConfig {
     ),
     bedrockModelId: String(
       readContext(source, 'bedrockModelId') ?? COMPUTE_DEFAULTS.bedrockModelId,
+    ),
+    citationScoreMode: String(
+      readContext(source, 'citationScoreMode') ?? COMPUTE_DEFAULTS.citationScoreMode,
     ),
   };
 }

@@ -59,7 +59,7 @@ export class BlogWorkflow extends Construct {
     const measureLive = new tasks.LambdaInvoke(this, 'MeasureLive', {
       lambdaFunction: citationTracker,
       comment: 'Measure current citation share for the live content.',
-      payload: sfn.TaskInput.fromObject({ target: 'live' }),
+      payload: sfn.TaskInput.fromObject({ target: 'live', score_mode: 'grounded' }),
       // Unwrap the Lambda's JSON body into $.measure (payloadResponseOnly keeps
       // the function result rather than the full invoke envelope).
       payloadResponseOnly: true,
@@ -84,6 +84,7 @@ export class BlogWorkflow extends Construct {
       comment: 'Re-measure citation share against the staged candidate.',
       payload: sfn.TaskInput.fromObject({
         target: 'staging',
+        score_mode: 'grounded',
         'staged_key.$': '$.patch.staged_key',
       }),
       payloadResponseOnly: true,

@@ -139,6 +139,10 @@ export class BlogApi extends Construct {
         BEDROCK_MODEL_ID: compute.bedrockModelId,
         CW_NAMESPACE: compute.metricsNamespace,
         STAGING_PREFIX: STORAGE_PREFIXES.staging,
+        // Grounded scoring + deterministic property resolution read the live
+        // property pages (and the staged candidate) from the content bucket.
+        PROPERTIES_PREFIX: `${STORAGE_PREFIXES.webApplication}properties/`,
+        SCORE_MODE: compute.citationScoreMode,
         PROMPTS_FILE: 'prompts.json',
       },
     });
@@ -154,6 +158,10 @@ export class BlogApi extends Construct {
     );
     this.addMetricsPolicy(this.citationTracker, compute.metricsNamespace);
     contentBucket.grantRead(this.citationTracker, `${STORAGE_PREFIXES.code}*`);
+    // Grounded scoring + property resolution read live pages; the re-test
+    // pass reads the staged candidate. Read-only, prefix-scoped.
+    contentBucket.grantRead(this.citationTracker, `${STORAGE_PREFIXES.webApplication}*`);
+    contentBucket.grantRead(this.citationTracker, `${STORAGE_PREFIXES.staging}*`);
 
     // --- patch-applier: read live content, write staging candidates --------
     this.patchApplier = new lambda.Function(this, 'PatchApplier', {
