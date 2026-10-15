@@ -153,13 +153,21 @@ def _staged_key(slug: str) -> str:
 # ---------------------------------------------------------------------------
 # Grounded scoring: can the model answer the prompt FROM the property's data?
 # ---------------------------------------------------------------------------
-def score_grounded(prompt_text: str, property_ld: dict, match_terms: list) -> dict:
+def score_grounded(prompt_text: str, property_ld: dict, match_terms: list,
+                   required_tag: str = "") -> dict:
     """Hand the property's structured data to the model as the ONLY context and
-    ask it to answer the prompt. Cited = the property's name/brand appears in the
-    grounded answer. Measures retrieval-readiness, not training recall.
+    ask it to answer the prompt. Cited = the brand appears in the grounded answer
+    AND, when a required_tag is given, the property's data actually satisfies that
+    attribute. The attribute gate stops a bare brand mention from counting when
+    the asked-for amenity/price isn't present (e.g. a 'pool' query grounded on a
+    pool-less property). Measures retrieval-readiness, not training recall.
     """
     if not property_ld:
         # No content to ground on -> cannot answer from it.
+        return {"cited": False, "matched_terms": [], "match_count": 0}
+    # Attribute gate: if the prompt targets a known attribute the property lacks,
+    # it cannot honestly satisfy the prompt -> not cited, without a model call.
+    if required_tag and not _property_has_attribute(property_ld, required_tag):
         return {"cited": False, "matched_terms": [], "match_count": 0}
     ctx = json.dumps(property_ld, separators=(",", ":"))
     grounded_prompt = (
@@ -325,6 +333,28 @@ def resolve_property(prompt_text: str, top_fix: str, catalog: list) -> str:
     return ""
 
 
+def _resolve_satisfying_property(prompt_text: str, top_fix: str, catalog: list) -> str:
+    """Pick a property in the prompt's city that HAS the attribute -- the one that
+    could legitimately answer the prompt. The mirror of resolve_property (which
+    finds the property that LACKS it). Used for the grounded BASELINE: score the
+    content that should answer, so a city with no satisfying property scores
+    uncited (a real gap) instead of being rescued by a bare brand mention.
+    Returns '' if no in-city property satisfies it.
+    """
+    low = (prompt_text or "").lower()
+    cities = sorted({c["city"] for c in catalog if c.get("city")}, key=len, reverse=True)
+    prompt_city = next((c for c in cities if c.lower() in low), None)
+    pool = [c for c in catalog if (prompt_city is None or c.get("city") == prompt_city)]
+    if not top_fix:
+        # No specific patchable attribute (e.g. a 'boutique' prompt) -> any
+        # in-city property can answer; fall back to the first by slug.
+        return sorted(pool, key=lambda c: c["slug"])[0]["slug"] if pool else ""
+    for cand in sorted(pool, key=lambda c: c["slug"]):
+        if _property_has_attribute(cand.get("ld", {}), top_fix):
+            return cand["slug"]
+    return ""
+
+
 def _load_catalog() -> list:
     """List every live property page and parse its slug/city/JSON-LD once."""
     catalog = []
@@ -417,13 +447,18 @@ def lambda_handler(event, context):
 
         try:
             if score_mode == "grounded":
+                probe_fix = _infer_fix_from_text(prompt_text)
                 if stage == "staging" and staged_slug:
+                    # Candidate pass: score the staged page; the gate confirms
+                    # the patch actually added the asked-for attribute.
                     ld = _read_property_ld(_staged_key(staged_slug))
                 else:
-                    probe_fix = _infer_fix_from_text(prompt_text)
-                    slug = resolve_property(prompt_text, probe_fix, catalog) if probe_fix else ""
+                    # Baseline: ground on an in-city property that HAS the
+                    # attribute (the one that could legitimately answer). If none
+                    # has it, the city genuinely can't satisfy the prompt.
+                    slug = _resolve_satisfying_property(prompt_text, probe_fix, catalog)
                     ld = catalog_by_slug.get(slug, {}).get("ld", {}) if slug else {}
-                citation = score_grounded(prompt_text, ld, match_terms)
+                citation = score_grounded(prompt_text, ld, match_terms, required_tag=probe_fix)
             else:
                 response_text = query_bedrock(prompt_text)
                 citation = check_citation(response_text, match_terms)
@@ -451,25 +486,39 @@ def lambda_handler(event, context):
 
     citation_rate = publish_metrics(results, brand, stage=stage)
 
+    # Pick the weakest ACTIONABLE gap: a not-cited prompt whose fix maps to a
+    # real FIX_MAP/_TAG_ATTRIBUTE tag AND resolves to a property (in the prompt's
+    # city) that genuinely lacks it. We deliberately IGNORE the model's free-text
+    # top_fix (e.g. "mountain_view_confirmed") when it is not a patchable tag --
+    # the model invents un-patchable tags for prompts no JSON-LD field can satisfy
+    # (boutique, mountain views, distance-to-landmark). Preferring the keyword-
+    # inferred tag keeps the choice deterministic and always patchable, so the
+    # loop stages a candidate it can actually improve instead of a dead gap.
+    loop_catalog = catalog if (score_mode == "grounded" and catalog) else _load_catalog()
     top_gap = None
     for r in results:
+        if r["citation"]["cited"]:
+            continue
         diag = r.get("diagnosis") or {}
-        if not r["citation"]["cited"] and diag.get("top_fix"):
-            top_fix = diag["top_fix"]
-            if score_mode == "grounded" and catalog:
-                slug = resolve_property(r["prompt"], top_fix, catalog)
-            else:
-                lazy_catalog = _load_catalog()
-                slug = resolve_property(r["prompt"], top_fix, lazy_catalog)
-            if not slug:
-                slug = config.get("default_patch_slug", "octank-hotels-denver-downtown")
-            top_gap = {
-                "prompt_id": r["prompt_id"],
-                "category": r.get("category"),
-                "top_fix": top_fix,
-                "property_slug": slug,
-            }
-            break
+        model_fix = (diag.get("top_fix") or "").strip().lower()
+        # Normalize to a patchable tag: prefer a known tag the model emitted,
+        # else infer one from the prompt text (always a FIX_MAP key or "").
+        if model_fix in _TAG_ATTRIBUTE:
+            top_fix = model_fix
+        else:
+            top_fix = _infer_fix_from_text(r["prompt"])
+        if top_fix not in _TAG_ATTRIBUTE:
+            continue  # no patchable fix for this prompt -> skip (not a dead gap)
+        slug = resolve_property(r["prompt"], top_fix, loop_catalog)
+        if not slug:
+            continue  # nothing in the prompt's city lacks it -> not an actionable gap
+        top_gap = {
+            "prompt_id": r["prompt_id"],
+            "category": r.get("category"),
+            "top_fix": top_fix,
+            "property_slug": slug,
+        }
+        break
 
     summary = {
         "brand": brand,
