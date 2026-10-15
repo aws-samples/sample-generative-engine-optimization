@@ -46,6 +46,11 @@
         "id": "boulder-extended-stay",
         "category": "extended",
         "prompt": "Extended stay options near CU Boulder with a kitchenette?"
+      },
+      {
+        "id": "fort-collins-pool",
+        "category": "family",
+        "prompt": "Which hotels in Fort Collins have a swimming pool?"
       }
     ]
   }
