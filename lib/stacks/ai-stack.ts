@@ -181,7 +181,14 @@ export class AiStack extends Stack {
             'searchProperties to resolve it to a property, then use that property for ' +
             'availability or rate lookups. If the request is ambiguous or matches more than ' +
             'one property, ask a brief clarifying question in human terms (property name or ' +
-            'city) or list the top matches for the traveler to choose -- never an ID.',
+            'city) or list the top matches for the traveler to choose -- never an ID. ' +
+            'When the traveler gives or implies dates (for example "this weekend", "tonight", ' +
+            '"next Friday", or specific dates), resolve them to concrete check-in and ' +
+            'check-out dates and call getAvailability for the candidate properties before ' +
+            'quoting rates -- do not answer a dated request with standard rates alone. ' +
+            'Interpret "this weekend" as the upcoming Saturday check-in to Sunday check-out. ' +
+            'State the check-in and check-out dates you used in your answer, and if a ' +
+            'property has no availability for those dates, say so rather than omitting it.',
         },
       ],
       tools: [
