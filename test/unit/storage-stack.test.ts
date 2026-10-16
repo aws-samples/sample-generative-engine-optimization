@@ -165,8 +165,9 @@ describe('StorageStack uploads source assets when assetsDir is provided', () => 
       assetsDir,
     });
     const template = Template.fromStack(stack);
-    // web_application, code, db, staging, and logs/cf_logs -> 5 BucketDeployment resources.
-    template.resourceCountIs('Custom::CDKBucketDeployment', 5);
+    // web_application is split into two deployments (HTML/other + a UTF-8 .txt
+    // pass), plus code, db, staging, and logs/cf_logs -> 6 BucketDeployment resources.
+    template.resourceCountIs('Custom::CDKBucketDeployment', 6);
   });
 
   it('does NOT invalidate CloudFront when no distributionId is supplied', () => {
