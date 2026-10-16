@@ -159,12 +159,30 @@ export class ContentStorage extends Construct {
             domainName: `${distributionId}.cloudfront.net`,
           })
         : undefined;
+      // Web app upload is split so the plain-text files (llms.txt, robots.txt,
+      // sitemap.xml) are served as UTF-8. BucketDeployment applies one
+      // Content-Type per deployment, so the text files go in their own
+      // deployment with `text/plain; charset=utf-8` (otherwise S3 infers
+      // `text/plain` with no charset and multi-byte chars like the em-dash or
+      // the ★ rating glyph render as mojibake). The main deployment uploads
+      // everything else (HTML carries its own <meta charset>, so it is fine).
+      // Only the main (HTML) deployment carries the distribution invalidation,
+      // so the edge is invalidated exactly once per deploy.
       this.deployAsset(
         'WebAppDeployment',
         assetsDir,
         'web_application',
         STORAGE_PREFIXES.webApplication,
         webAppDistribution,
+        { exclude: ['*.txt'] },
+      );
+      this.deployAsset(
+        'WebAppTextDeployment',
+        assetsDir,
+        'web_application',
+        STORAGE_PREFIXES.webApplication,
+        undefined,
+        { exclude: ['*'], include: ['*.txt'], contentType: 'text/plain; charset=utf-8' },
       );
       this.deployAsset('CodeDeployment', assetsDir, 'code', STORAGE_PREFIXES.code);
       // DDL + seed schema live under code/db/ so Lambdas/loaders can fetch them.
@@ -194,6 +212,7 @@ export class ContentStorage extends Construct {
     subDir: string,
     destPrefix: string,
     distribution?: cloudfront.IDistribution,
+    opts?: { exclude?: string[]; include?: string[]; contentType?: string },
   ): void {
     const sourcePath = path.join(assetsDir, subDir);
     if (!fs.existsSync(sourcePath)) return;
@@ -205,6 +224,14 @@ export class ContentStorage extends Construct {
       // Only manage keys under this prefix; never wipe sibling prefixes.
       prune: false,
       retainOnDelete: false,
+      // Optional include/exclude so one subdirectory can be split into multiple
+      // deployments with different metadata (e.g. .txt files served as UTF-8).
+      ...(opts?.exclude ? { exclude: opts.exclude } : {}),
+      ...(opts?.include ? { include: opts.include } : {}),
+      // When set, every object in this deployment is stamped with this
+      // Content-Type. BucketDeployment applies one contentType to the whole
+      // source, so this is only used for single-type splits (e.g. text files).
+      ...(opts?.contentType ? { contentType: opts.contentType } : {}),
       // Served content only: invalidate all public SPA paths when a
       // distribution is supplied (origin path /web_application maps to `/*`).
       ...(distribution ? { distribution, distributionPaths: ['/*'] } : {}),
