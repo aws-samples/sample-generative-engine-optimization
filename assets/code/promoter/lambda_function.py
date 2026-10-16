@@ -80,13 +80,20 @@ def lambda_handler(event, context):
     slug = event.get("property_slug", "unknown")
     baseline = float(event.get("baseline_citation_rate", 0) or 0)
     candidate = float(event.get("candidate_citation_rate", 0) or 0)
+    # Per-prompt validation signal (preferred over the whole-set rate): the gap
+    # prompt the loop patched must be uncited at baseline and cited on the
+    # staged candidate. The whole-set rate comparison is noisy because baseline
+    # and candidate are two independently-sampled model runs, so unrelated
+    # borderline prompts flip run-to-run; the per-prompt check is deterministic.
+    gap_cited_baseline = bool(event.get("gap_cited_baseline") or False)
+    gap_cited_staging = bool(event.get("gap_cited_staging") or False)
 
     # Nothing was staged (patch made no change) -> nothing to validate.
     if not staged_key:
         _emit("PromotionSkipped", 1, slug)
         return {"ready": False, "reason": "no_candidate", "baseline": baseline, "candidate": candidate}
 
-    improved = candidate > baseline
+    improved = gap_cited_staging and not gap_cited_baseline
     if not improved:
         # Discard the non-improving candidate from staging.
         s3.delete_object(Bucket=CONTENT_BUCKET, Key=staged_key)

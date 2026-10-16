@@ -86,6 +86,9 @@ export class BlogWorkflow extends Construct {
         target: 'staging',
         score_mode: 'grounded',
         'staged_key.$': '$.patch.staged_key',
+        // The staging pass carries the patched property slug so the tracker
+        // scores the gap prompt against the staged page.
+        'staged_slug.$': '$.patch.property_slug',
       }),
       payloadResponseOnly: true,
       resultPath: '$.retest',
@@ -101,6 +104,11 @@ export class BlogWorkflow extends Construct {
         'property_slug.$': '$.patch.property_slug',
         'baseline_citation_rate.$': '$.measure.citation_rate_pct',
         'candidate_citation_rate.$': '$.retest.citation_rate_pct',
+        // Per-prompt validation: was the patched gap prompt uncited at baseline
+        // and cited on the staged candidate? This is the deterministic signal
+        // the promoter uses instead of the noisy whole-set rate comparison.
+        'gap_cited_baseline.$': '$.measure.gap_prompt_cited',
+        'gap_cited_staging.$': '$.retest.gap_prompt_cited',
       }),
       payloadResponseOnly: true,
       resultPath: '$.validate',
