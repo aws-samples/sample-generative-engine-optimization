@@ -438,6 +438,11 @@ def lambda_handler(event, context):
     staged_slug = None
     if staged_key and staged_key.endswith(".html"):
         staged_slug = staged_key.rsplit("/", 1)[-1][:-len(".html")]
+    # The prompt the loop is validating (passed explicitly by the state machine
+    # on the staging re-test). In the staging pass every prompt may be cited, so
+    # top_gap is None there -- we cannot re-derive the gap prompt from results.
+    # The caller tells us which prompt_id to report gap_prompt_cited for.
+    gap_prompt_id = event.get("gap_prompt_id")
 
     results = []
     for prompt_config in prompts:
@@ -535,9 +540,12 @@ def lambda_handler(event, context):
         # Per-prompt signal for the validator: did the gap prompt (the one the
         # loop is patching) end up cited in THIS pass? Immune to unrelated
         # borderline prompts flipping between two independently-sampled runs.
+        # Report the gap prompt's cited status for THIS pass. Prefer the
+        # explicit gap_prompt_id from the caller (set on the staging re-test);
+        # fall back to top_gap for the baseline/live pass where it is derived.
         "gap_prompt_cited": next(
             (r["citation"]["cited"] for r in results
-             if top_gap and r["prompt_id"] == top_gap["prompt_id"]),
+             if r["prompt_id"] == (gap_prompt_id or (top_gap or {}).get("prompt_id"))),
             None,
         ),
         "top_gap": top_gap,
