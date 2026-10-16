@@ -175,6 +175,20 @@ describe('ContentStorage asset uploads', () => {
     synth({ assetsDir }).resourceCountIs('Custom::CDKBucketDeployment', 6);
   });
 
+  it('serves plain-text web assets (*.txt) as UTF-8 via a dedicated split deployment', () => {
+    // The split exists so llms.txt/robots.txt/sitemap.xml are stamped with a
+    // charset; without it S3 infers `text/plain` (no charset) and multi-byte
+    // glyphs (em-dash, ★) render as mojibake. Assert the INTENT, not just that
+    // a sixth deployment exists: the .txt-only pass stamps the UTF-8 content
+    // type and carries NO distribution (invalidation lives on the HTML pass).
+    synth({ assetsDir }).hasResourceProperties('Custom::CDKBucketDeployment', {
+      Exclude: ['*'],
+      Include: ['*.txt'],
+      SystemMetadata: { 'content-type': 'text/plain; charset=utf-8' },
+      DistributionId: Match.absent(),
+    });
+  });
+
   it('does NOT invalidate CloudFront when no distributionId is supplied', () => {
     const deployments = synth({ assetsDir }).findResources('Custom::CDKBucketDeployment');
     for (const d of Object.values(deployments)) {
