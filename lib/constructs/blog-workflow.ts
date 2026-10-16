@@ -89,6 +89,10 @@ export class BlogWorkflow extends Construct {
         // The staging pass carries the patched property slug so the tracker
         // scores the gap prompt against the staged page.
         'staged_slug.$': '$.patch.property_slug',
+        // Pass the gap prompt_id explicitly: in the staging pass every prompt
+        // may be cited (top_gap is null), so the tracker cannot re-derive which
+        // prompt to report gap_prompt_cited for -- the measure step tells it.
+        'gap_prompt_id.$': '$.measure.top_gap.prompt_id',
       }),
       payloadResponseOnly: true,
       resultPath: '$.retest',
