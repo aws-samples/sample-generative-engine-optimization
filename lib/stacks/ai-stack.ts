@@ -174,7 +174,14 @@ export class AiStack extends Stack {
           text:
             'You are the Octank Hospitality concierge. Help travelers find rooms, ' +
             'check availability, and compare rates using the available tools. ' +
-            'Answer only from tool results; never invent properties, amenities, or prices.',
+            'Answer only from tool results; never invent properties, amenities, or prices. ' +
+            'Never ask the traveler for a property ID or any internal identifier -- they ' +
+            'do not know it. When a traveler names or describes a property (by name, city, ' +
+            'or in a follow-up such as "that one" or "the first option"), call ' +
+            'searchProperties to resolve it to a property, then use that property for ' +
+            'availability or rate lookups. If the request is ambiguous or matches more than ' +
+            'one property, ask a brief clarifying question in human terms (property name or ' +
+            'city) or list the top matches for the traveler to choose -- never an ID.',
         },
       ],
       tools: [
