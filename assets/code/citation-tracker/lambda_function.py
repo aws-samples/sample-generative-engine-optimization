@@ -448,16 +448,20 @@ def lambda_handler(event, context):
         try:
             if score_mode == "grounded":
                 probe_fix = _infer_fix_from_text(prompt_text)
-                if stage == "staging" and staged_slug:
-                    # Candidate pass: score the staged page; the gate confirms
-                    # the patch actually added the asked-for attribute.
+                # Resolve the property that should answer THIS prompt (same in
+                # both the live and staging passes). For the gap prompt no live
+                # property satisfies it, so resolution returns "".
+                sat_slug = _resolve_satisfying_property(prompt_text, probe_fix, catalog)
+                if stage == "staging" and staged_slug and not sat_slug:
+                    # The gap prompt: no LIVE property answers it, but the staged
+                    # candidate (the patched property) now does. Score the staged
+                    # page. Every OTHER prompt grounds on its own satisfying
+                    # property below -- identical to the baseline pass -- so
+                    # unrelated prompts can't flip the candidate-vs-baseline
+                    # comparison due to model non-determinism.
                     ld = _read_property_ld(_staged_key(staged_slug))
                 else:
-                    # Baseline: ground on an in-city property that HAS the
-                    # attribute (the one that could legitimately answer). If none
-                    # has it, the city genuinely can't satisfy the prompt.
-                    slug = _resolve_satisfying_property(prompt_text, probe_fix, catalog)
-                    ld = catalog_by_slug.get(slug, {}).get("ld", {}) if slug else {}
+                    ld = catalog_by_slug.get(sat_slug, {}).get("ld", {}) if sat_slug else {}
                 citation = score_grounded(prompt_text, ld, match_terms, required_tag=probe_fix)
             else:
                 response_text = query_bedrock(prompt_text)
@@ -528,6 +532,14 @@ def lambda_handler(event, context):
         "total_prompts": len(results),
         "cited_count": sum(1 for r in results if r["citation"]["cited"]),
         "citation_rate_pct": round(citation_rate, 1),
+        # Per-prompt signal for the validator: did the gap prompt (the one the
+        # loop is patching) end up cited in THIS pass? Immune to unrelated
+        # borderline prompts flipping between two independently-sampled runs.
+        "gap_prompt_cited": next(
+            (r["citation"]["cited"] for r in results
+             if top_gap and r["prompt_id"] == top_gap["prompt_id"]),
+            None,
+        ),
         "top_gap": top_gap,
         "results": results,
     }
