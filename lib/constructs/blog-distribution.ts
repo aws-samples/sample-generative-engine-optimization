@@ -83,6 +83,37 @@ function handler(event) {
 `),
     });
 
+    // Pretty-URL rewrite for the SPA default behavior. The home page links to
+    // extensionless property paths (/properties/<slug>), but the stored S3
+    // objects are <slug>.html. Without this, a click forwards /properties/<slug>
+    // to S3 (OAC), the key doesn't exist, and S3 returns 403 AccessDenied.
+    // This viewer-request function appends ".html" to extensionless, non-root
+    // paths (and maps a trailing-slash path to its index.html) so clean URLs
+    // resolve. Static assets with an extension (.css, .js, .json, .txt, .xml,
+    // images, ...) and the root are left untouched.
+    const prettyUrlFn = new cloudfront.Function(this, 'PrettyUrlRewrite', {
+      comment: 'Append .html to extensionless SPA paths so pretty URLs resolve',
+      code: cloudfront.FunctionCode.fromInline(`
+function handler(event) {
+  var request = event.request;
+  var uri = request.uri;
+  if (uri === '/' || uri === '') {
+    return request;
+  }
+  if (uri.endsWith('/')) {
+    request.uri = uri + 'index.html';
+    return request;
+  }
+  var lastSegment = uri.substring(uri.lastIndexOf('/') + 1);
+  if (lastSegment.indexOf('.') !== -1) {
+    return request;
+  }
+  request.uri = uri + '.html';
+  return request;
+}
+`),
+    });
+
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment: `${prefix} — Octank Hospitality (SPA + API)`,
       defaultRootObject: edge.defaultRootObject,
@@ -100,6 +131,12 @@ function handler(event) {
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS,
+        functionAssociations: [
+          {
+            function: prettyUrlFn,
+            eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
+          },
+        ],
       },
       additionalBehaviors: {
         [edge.apiPathPattern]: {
