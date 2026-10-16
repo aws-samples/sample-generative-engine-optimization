@@ -85,11 +85,17 @@ describe('EdgeStack (CloudFront)', () => {
     template.hasOutput('DistributionDomainName', {});
   });
 
-  it('attaches a CloudFront Function to strip the /api prefix', () => {
-    template.resourceCountIs('AWS::CloudFront::Function', 1);
-    const fns = template.findResources('AWS::CloudFront::Function');
-    const code = Object.values(fns)[0].Properties.FunctionCode as string;
-    expect(code).toContain("var prefix = '/api'");
+  it('attaches CloudFront Functions: the /api prefix strip and the pretty-URL rewrite', () => {
+    // Two viewer-request functions now: the /api-prefix strip (API behavior)
+    // and the pretty-URL .html rewrite (SPA default behavior).
+    template.resourceCountIs('AWS::CloudFront::Function', 2);
+    const codes = Object.values(template.findResources('AWS::CloudFront::Function')).map(
+      (f) => f.Properties.FunctionCode as string,
+    );
+    // /api prefix strip
+    expect(codes.some((c) => c.includes("var prefix = '/api'"))).toBe(true);
+    // pretty-URL rewrite: appends .html to extensionless, non-root paths
+    expect(codes.some((c) => c.includes(".html") && c.includes("lastIndexOf('/')"))).toBe(true);
   });
 });
 

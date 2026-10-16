@@ -170,8 +170,23 @@ describe('ContentStorage asset uploads', () => {
   });
 
   it('creates one BucketDeployment per existing asset subdirectory', () => {
-    // web_application, code, db, staging, logs/cf_logs = 5.
-    synth({ assetsDir }).resourceCountIs('Custom::CDKBucketDeployment', 5);
+    // web_application is split into two deployments (HTML/other + a UTF-8 .txt
+    // pass), plus code, db, staging, logs/cf_logs = 6.
+    synth({ assetsDir }).resourceCountIs('Custom::CDKBucketDeployment', 6);
+  });
+
+  it('serves plain-text web assets (*.txt) as UTF-8 via a dedicated split deployment', () => {
+    // The split exists so llms.txt/robots.txt/sitemap.xml are stamped with a
+    // charset; without it S3 infers `text/plain` (no charset) and multi-byte
+    // glyphs (em-dash, ★) render as mojibake. Assert the INTENT, not just that
+    // a sixth deployment exists: the .txt-only pass stamps the UTF-8 content
+    // type and carries NO distribution (invalidation lives on the HTML pass).
+    synth({ assetsDir }).hasResourceProperties('Custom::CDKBucketDeployment', {
+      Exclude: ['*'],
+      Include: ['*.txt'],
+      SystemMetadata: { 'content-type': 'text/plain; charset=utf-8' },
+      DistributionId: Match.absent(),
+    });
   });
 
   it('does NOT invalidate CloudFront when no distributionId is supplied', () => {
@@ -197,7 +212,9 @@ describe('ContentStorage asset uploads', () => {
     const partial = fs.mkdtempSync(path.join(os.tmpdir(), 'geo-cs-partial-'));
     fs.mkdirSync(path.join(partial, 'web_application'), { recursive: true });
     fs.writeFileSync(path.join(partial, 'web_application', 'index.html'), '// placeholder');
-    synth({ assetsDir: partial }).resourceCountIs('Custom::CDKBucketDeployment', 1);
+    // web_application alone still yields two deployments: the main upload plus
+    // the UTF-8 .txt split pass.
+    synth({ assetsDir: partial }).resourceCountIs('Custom::CDKBucketDeployment', 2);
     fs.rmSync(partial, { recursive: true, force: true });
   });
 });
