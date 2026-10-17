@@ -49,6 +49,8 @@ import logging
 import os
 import time
 import uuid
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import boto3
 
@@ -89,11 +91,18 @@ def run_agent(message, session_id):
     """
     session_id = _normalize_session_id(session_id)
 
+    # Anchor relative dates ("this weekend", "tonight") to a known current date.
+    # The harness has no reliable notion of "today", so without this it guesses
+    # (it resolved "this weekend" to a wrong, past date in testing). Prepend the
+    # current date in the demo's timezone so the model's date math is deterministic.
+    today = datetime.now(ZoneInfo("America/Chicago")).strftime("%A, %B %d, %Y")
+    dated_message = f"(For reference, today is {today}.)\n\n{message}"
+
     # Invoke the MANAGED HARNESS. messages is a Converse-style array.
     kwargs = {
         "harnessArn": HARNESS_ARN,
         "runtimeSessionId": session_id,
-        "messages": [{"role": "user", "content": [{"text": message}]}],
+        "messages": [{"role": "user", "content": [{"text": dated_message}]}],
     }
     if HARNESS_QUALIFIER:
         kwargs["qualifier"] = HARNESS_QUALIFIER
