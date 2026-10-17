@@ -154,14 +154,17 @@ export class BlogApi extends Construct {
     // profile may route to, without granting every anthropic.claude-* model.
     const profileModelId = compute.bedrockModelId;
     const foundationModelId = profileModelId.replace(/^global\./, '');
-    const account = this.node.tryGetContext('account') ?? '*';
+    // Scope the inference-profile ARN to the DEPLOYING account. Aws.ACCOUNT_ID
+    // is the CloudFormation intrinsic resolved at deploy time -- never a `*`
+    // wildcard. (An unresolved context fallback could otherwise widen this to
+    // every account.)
     this.citationTracker.addToRolePolicy(
       new iam.PolicyStatement({
         sid: 'InvokeBedrockModel',
         actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
         resources: [
           `arn:aws:bedrock:*::foundation-model/${foundationModelId}*`,
-          `arn:aws:bedrock:*:${account}:inference-profile/${profileModelId}*`,
+          `arn:aws:bedrock:*:${Aws.ACCOUNT_ID}:inference-profile/${profileModelId}*`,
         ],
       }),
     );
