@@ -1,4 +1,4 @@
-# robots.txt — Octank Hospitality
+# robots.txt - Octank Hospitality
 # Allow all legitimate crawlers including AI engines.
 
 User-agent: *
