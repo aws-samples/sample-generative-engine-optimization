@@ -8487,4 +8487,21 @@ SELECT setval(pg_get_serial_sequence('availability', 'availability_id'), COALESC
 SELECT setval(pg_get_serial_sequence('rates', 'rate_id'), COALESCE((SELECT MAX(rate_id) FROM rates), 1), true);
 SELECT setval(pg_get_serial_sequence('reviews', 'review_id'), COALESCE((SELECT MAX(review_id) FROM reviews), 1), true);
 
+-- ---------------------------------------------------------------------------
+-- Roll the availability/rates window forward so it always covers "now".
+-- The seed rows span a fixed 30-day range; without this they would go stale
+-- and a current-date query (e.g. "tonight", "this weekend") returns no
+-- inventory. Each UPDATE shifts its table by a whole number of days so the
+-- table's MIN date lands one day BEFORE load time (CURRENT_DATE - 1). With the
+-- 30-day seed span that populates roughly yesterday -> today + ~29 days, so
+-- near-term dated queries (tonight / this weekend / next week) always resolve
+-- to real inventory. Availability and rates share the same seed range, so both
+-- shift by the same delta and stay aligned (an available date keeps its rate).
+-- Recomputed from CURRENT_DATE every time the loader runs (each deploy/update
+-- re-anchors it; re-running is a no-op once anchored).
+-- Splitter-safe: plain UPDATEs, no dollar-quoted DO block, one top-level ';'.
+-- ---------------------------------------------------------------------------
+UPDATE availability SET avail_date = avail_date + (((CURRENT_DATE - INTEGER '1')) - (SELECT MIN(avail_date) FROM availability));
+UPDATE rates SET rate_date = rate_date + (((CURRENT_DATE - INTEGER '1')) - (SELECT MIN(rate_date) FROM rates));
+
 COMMIT;
