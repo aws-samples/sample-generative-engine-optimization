@@ -146,13 +146,22 @@ export class BlogApi extends Construct {
         PROMPTS_FILE: 'prompts.json',
       },
     });
+    // Scope the Bedrock grant to the CONFIGURED model, not the whole Claude
+    // family. compute.bedrockModelId is the inference-profile id
+    // (e.g. `global.anthropic.claude-sonnet-4-6`); the underlying
+    // foundation-model id is the same without the `global.` routing prefix.
+    // A single trailing `*` still covers region/version-suffixed variants the
+    // profile may route to, without granting every anthropic.claude-* model.
+    const profileModelId = compute.bedrockModelId;
+    const foundationModelId = profileModelId.replace(/^global\./, '');
+    const account = this.node.tryGetContext('account') ?? '*';
     this.citationTracker.addToRolePolicy(
       new iam.PolicyStatement({
         sid: 'InvokeBedrockModel',
         actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
         resources: [
-          'arn:aws:bedrock:*::foundation-model/anthropic.claude-*',
-          `arn:aws:bedrock:*:${this.node.tryGetContext('account') ?? '*'}:inference-profile/global.anthropic.claude-*`,
+          `arn:aws:bedrock:*::foundation-model/${foundationModelId}*`,
+          `arn:aws:bedrock:*:${account}:inference-profile/${profileModelId}*`,
         ],
       }),
     );
@@ -284,12 +293,24 @@ export class BlogApi extends Construct {
     this.apiEndpoint = this.api.url;
   }
 
-  /** Grant scoped cloudwatch:PutMetricData for a specific metrics namespace. */
+  /**
+   * Grant scoped cloudwatch:PutMetricData for a specific metrics namespace.
+   *
+   * `resources: ['*']` is REQUIRED, not lax: cloudwatch:PutMetricData has no
+   * resource-level ARN form (AWS does not model CloudWatch metrics as IAM
+   * resources), so a resource ARN cannot be used here. We constrain the grant
+   * the only way AWS supports -- a condition that pins it to a single metrics
+   * namespace -- so the function can publish ONLY to `namespace` and nothing
+   * else. This is an acknowledged, mitigated AWS service limitation, not an
+   * over-broad grant.
+   */
   private addMetricsPolicy(fn: lambda.Function, namespace: string): void {
     fn.addToRolePolicy(
       new iam.PolicyStatement({
         sid: 'PublishMetrics',
         actions: ['cloudwatch:PutMetricData'],
+        // No resource-level ARN exists for this action; scoped via the
+        // namespace condition below (the AWS-supported mechanism).
         resources: ['*'],
         conditions: { StringEquals: { 'cloudwatch:namespace': namespace } },
       }),

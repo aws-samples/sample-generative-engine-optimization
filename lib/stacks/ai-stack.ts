@@ -69,10 +69,19 @@ export class AiStack extends Stack {
       }),
     );
 
+    // The model the concierge harness runs on. Declared ONCE here so the IAM
+    // grant below and the CfnHarness model config further down cannot drift
+    // apart. It is the inference-profile id; the foundation-model id is the
+    // same without the `global.` routing prefix.
+    const conciergeProfileModelId = 'global.anthropic.claude-sonnet-4-6';
+    const conciergeFoundationModelId = conciergeProfileModelId.replace(/^global\./, '');
+
     // ── Harness execution role: invoke the model via the INFERENCE PROFILE. ──
     // NOTE: the inference-profile ARN is REQUIRED (not just foundation-model/*).
     // Sonnet 4.6 invokes via the global inference profile; a foundation-model-only
     // scope fails at runtime with AccessDenied. (Hard-won lesson from the console build.)
+    // Scoped to the CONFIGURED model (one trailing `*` for region/version
+    // variants the profile may route to), not the whole anthropic.claude-* family.
     const harnessRole = new iam.Role(this, 'HarnessExecRole', {
       roleName: `${prefix}-harness-exec-role`,
       assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
@@ -82,8 +91,8 @@ export class AiStack extends Stack {
       new iam.PolicyStatement({
         actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
         resources: [
-          'arn:aws:bedrock:*::foundation-model/anthropic.claude-*',
-          `arn:aws:bedrock:*:${this.account}:inference-profile/global.anthropic.claude-*`,
+          `arn:aws:bedrock:*::foundation-model/${conciergeFoundationModelId}*`,
+          `arn:aws:bedrock:*:${this.account}:inference-profile/${conciergeProfileModelId}*`,
         ],
       }),
     );
@@ -167,7 +176,7 @@ export class AiStack extends Stack {
       harnessName: 'geo_concierge', // [a-zA-Z][a-zA-Z0-9_]{0,39}; immutable (change ⇒ replacement)
       executionRoleArn: harnessRole.roleArn,
       model: {
-        bedrockModelConfig: { modelId: 'global.anthropic.claude-sonnet-4-6' },
+        bedrockModelConfig: { modelId: conciergeProfileModelId },
       },
       systemPrompt: [
         {
@@ -236,13 +245,15 @@ export class AiStack extends Stack {
       {
         id: 'AwsSolutions-IAM5',
         reason:
-          'Harness role is scoped to the Claude model family plus the global ' +
-          'inference-profile ARN (required for Sonnet invocation); the gateway role ' +
+          'Harness role is scoped to the CONFIGURED model (anthropic.claude-' +
+          'sonnet-4-6*, a single trailing wildcard for region/version variants -- ' +
+          'NOT the whole claude-* family) plus its global inference-profile ARN ' +
+          '(required for Sonnet invocation); the gateway role ' +
           'is scoped to execute-api:Invoke on exactly the project REST API stage; ' +
           'InvokeAgentRuntime is scoped to this account+region agent-runtime ' +
           'namespace (runtime/*, since the managed harness runtime id is ' +
           'service-assigned and unknown at synth). The remaining wildcards are the ' +
-          'model-family / method-path / runtime-id segments, which have no narrower ' +
+          'model-version / method-path / runtime-id segments, which have no narrower ' +
           'resource form. bedrock-agentcore:GetWorkloadAccessToken is a workload-' +
           'identity token action with NO resource-level ARN form (AWS\'s own ' +
           'BedrockAgentCoreRuntimeServiceRolePolicy grants it on `*`), so it is ' +

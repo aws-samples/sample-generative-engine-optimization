@@ -123,10 +123,18 @@ export class ContentStorage extends Construct {
     // --- CloudFront OAC read access ----------------------------------------
     // The EdgeStack imports this bucket read-only (to avoid a Storage<->Edge
     // dependency cycle), so `withOriginAccessControl` cannot write this policy
-    // for us. We add it here, in the stack that owns the bucket. The SourceArn
-    // is wildcarded to any distribution in this account to avoid referencing the
-    // EdgeStack (which would recreate the cycle); CloudFront still only reads via
-    // its own OAC-signed requests.
+    // for us. We add it here, in the stack that owns the bucket.
+    //
+    // SourceArn scoping: once the distribution id is known (passed via
+    // `-c distributionId=...` on the second deploy), we pin the condition to
+    // THAT distribution's ARN. The id is a plain context string, not a
+    // cross-stack reference, so this does NOT recreate the Storage<->Edge
+    // cycle. On the very first deploy the distribution does not exist yet, so
+    // we fall back to an account-scoped wildcard (still limited by
+    // SourceAccount); the grant tightens automatically on the next deploy.
+    const sourceArn = distributionId
+      ? `arn:${Aws.PARTITION}:cloudfront::${Aws.ACCOUNT_ID}:distribution/${distributionId}`
+      : `arn:${Aws.PARTITION}:cloudfront::${Aws.ACCOUNT_ID}:distribution/*`;
     this.bucket.addToResourcePolicy(
       new iam.PolicyStatement({
         sid: 'AllowCloudFrontOacRead',
@@ -139,7 +147,7 @@ export class ContentStorage extends Construct {
             'AWS:SourceAccount': Aws.ACCOUNT_ID,
           },
           ArnLike: {
-            'AWS:SourceArn': `arn:${Aws.PARTITION}:cloudfront::${Aws.ACCOUNT_ID}:distribution/*`,
+            'AWS:SourceArn': sourceArn,
           },
         },
       }),
