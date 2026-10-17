@@ -95,6 +95,31 @@ describe('ContentStorage construct', () => {
     });
   });
 
+  it('scopes the OAC SourceArn to the SPECIFIC distribution when its id is known', () => {
+    // Least-privilege: once the distribution id is supplied, the OAC read grant
+    // pins to that distribution's ARN rather than an account-wide
+    // `distribution/*` wildcard.
+    const t = synth({ distributionId: 'E1234567890ABC' });
+    t.hasResourceProperties('AWS::S3::BucketPolicy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Sid: 'AllowCloudFrontOacRead',
+            Condition: Match.objectLike({
+              ArnLike: {
+                'AWS:SourceArn': {
+                  'Fn::Join': Match.arrayWith([
+                    Match.arrayWith([Match.stringLikeRegexp('distribution/E1234567890ABC$')]),
+                  ]),
+                },
+              },
+            }),
+          }),
+        ]),
+      },
+    });
+  });
+
   it('defines the per-prefix lifecycle rules', () => {
     template.hasResourceProperties('AWS::S3::Bucket', {
       LifecycleConfiguration: {

@@ -88,15 +88,17 @@ describe('AiStack (AgentCore "Be Called" layer)', () => {
     });
   });
 
-  it('scopes the harness role to the Claude family AND the inference profile', () => {
+  it('scopes the harness role to the CONFIGURED model AND its inference profile', () => {
+    // Narrowed from the whole anthropic.claude-* family to the specific model
+    // the harness runs on (one trailing * covers region/version variants).
     template.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: {
         Statement: Match.arrayWith([
           Match.objectLike({
             Action: Match.arrayWith(['bedrock:InvokeModel']),
             Resource: Match.arrayWith([
-              'arn:aws:bedrock:*::foundation-model/anthropic.claude-*',
-              Match.stringLikeRegexp('inference-profile/global\\.anthropic\\.claude-\\*'),
+              'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*',
+              Match.stringLikeRegexp('inference-profile/global\\.anthropic\\.claude-sonnet-4-6\\*'),
             ]),
           }),
         ]),
