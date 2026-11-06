@@ -188,3 +188,11 @@ resolved or carry documented `NagSuppressions`; see
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Complete config reference |
 | [docs/SECURITY.md](docs/SECURITY.md) | Network isolation, IAM least-privilege, encryption, cdk-nag baseline |
 | [docs/ADAPTING.md](docs/ADAPTING.md) | What to keep vs. adapt for your own business |
+
+## Security
+
+See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
+
+## License
+
+This library is licensed under the MIT-0 License. See the [LICENSE](LICENSE) file.

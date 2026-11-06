@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT-0
  */
 
 // Integration tests hit real AWS APIs and can run long. `testTimeout` is a

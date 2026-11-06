@@ -1,5 +1,5 @@
 # Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT-0
 
 """
 GEO Demo - On-Site Concierge Chat SUBMIT Endpoint (async request/poll)
